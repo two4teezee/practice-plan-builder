@@ -23,10 +23,11 @@ interface DrillsListProps {
   drills: PracticePlanDrill[];
   onReorder: (drills: PracticePlanDrill[]) => void;
   onRemove: (id: string) => void;
+  onUpdateDuration: (id: string, duration: string) => void;
   onViewDetails: (item: PracticePlanDrill) => void;
 }
 
-export function DrillsList({ drills, onReorder, onRemove, onViewDetails }: DrillsListProps) {
+export function DrillsList({ drills, onReorder, onRemove, onUpdateDuration, onViewDetails }: DrillsListProps) {
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -80,6 +81,7 @@ export function DrillsList({ drills, onReorder, onRemove, onViewDetails }: Drill
               key={drill.id}
               item={drill}
               onRemove={onRemove}
+              onUpdateDuration={onUpdateDuration}
               onViewDetails={onViewDetails}
             />
           ))}

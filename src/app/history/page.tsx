@@ -18,7 +18,6 @@ import {
   Calendar, 
   Clock, 
   MapPin, 
-  User, 
   FileText,
   Download,
   Printer,
@@ -109,10 +108,6 @@ export default function HistoryPage() {
                         <div className="flex items-center gap-1.5">
                           <MapPin className="w-4 h-4" />
                           <span>{plan.location}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <User className="w-4 h-4" />
-                          <span>{plan.coach}</span>
                         </div>
                       </div>
                       {plan.description && (
@@ -267,10 +262,6 @@ export default function HistoryPage() {
               <div>
                 <p className="text-sm text-gray-500 dark:text-gray-400">Location</p>
                 <p className="font-medium text-gray-900 dark:text-white">{selectedPlan.location}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Coach</p>
-                <p className="font-medium text-gray-900 dark:text-white">{selectedPlan.coach}</p>
               </div>
             </div>
 

@@ -2,7 +2,7 @@
 
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { PracticePlanDrill } from '@/lib/types';
+import { PracticePlanDrill, DRILL_DURATIONS, getEffectiveDuration } from '@/lib/types';
 import { GripVertical, X, Clock, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { useState } from 'react';
@@ -10,10 +10,11 @@ import { useState } from 'react';
 interface SortableDrillItemProps {
   item: PracticePlanDrill;
   onRemove: (id: string) => void;
+  onUpdateDuration: (id: string, duration: string) => void;
   onViewDetails: (item: PracticePlanDrill) => void;
 }
 
-export function SortableDrillItem({ item, onRemove, onViewDetails }: SortableDrillItemProps) {
+export function SortableDrillItem({ item, onRemove, onUpdateDuration, onViewDetails }: SortableDrillItemProps) {
   const [expanded, setExpanded] = useState(false);
   
   const {
@@ -31,6 +32,7 @@ export function SortableDrillItem({ item, onRemove, onViewDetails }: SortableDri
   };
 
   const categoryColors: Record<string, string> = {
+    Admin: 'border-l-slate-500',
     Skating: 'border-l-blue-500',
     Shooting: 'border-l-red-500',
     Passing: 'border-l-green-500',
@@ -38,6 +40,9 @@ export function SortableDrillItem({ item, onRemove, onViewDetails }: SortableDri
     Offensive: 'border-l-orange-500',
     Other: 'border-l-gray-500',
   };
+
+  const effectiveDuration = getEffectiveDuration(item);
+  const isCustomDuration = item.customDuration && item.customDuration !== item.drill.duration;
 
   return (
     <div
@@ -72,11 +77,35 @@ export function SortableDrillItem({ item, onRemove, onViewDetails }: SortableDri
             {item.drill.name}
           </h4>
           <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-            <Clock className="w-3.5 h-3.5" />
-            <span>{item.drill.duration}</span>
-            <span className="text-gray-300 dark:text-gray-600">•</span>
             <span>{item.drill.category}</span>
           </div>
+        </div>
+
+        {/* Duration Selector */}
+        <div className="flex items-center gap-1.5">
+          <Clock className="w-4 h-4 text-gray-400" />
+          <select
+            value={effectiveDuration}
+            onChange={(e) => onUpdateDuration(item.id, e.target.value)}
+            className={`
+              px-2 py-1 text-sm rounded-lg border
+              bg-white dark:bg-gray-700 
+              border-gray-200 dark:border-gray-600
+              text-gray-900 dark:text-white
+              focus:ring-2 focus:ring-primary-500 focus:border-primary-500
+              cursor-pointer
+              ${isCustomDuration ? 'ring-2 ring-primary-500/50' : ''}
+            `}
+          >
+            {DRILL_DURATIONS.map((d) => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
+          {isCustomDuration && (
+            <span className="text-xs text-primary-600 dark:text-primary-400" title={`Default: ${item.drill.duration}`}>
+              *
+            </span>
+          )}
         </div>
 
         {/* Actions */}
@@ -105,6 +134,11 @@ export function SortableDrillItem({ item, onRemove, onViewDetails }: SortableDri
       {expanded && (
         <div className="px-4 pb-4 pt-0 border-t border-gray-100 dark:border-gray-700 mt-2">
           <div className="pt-3 space-y-2 text-sm">
+            {isCustomDuration && (
+              <div className="text-xs text-primary-600 dark:text-primary-400 mb-2">
+                Duration modified from default ({item.drill.duration})
+              </div>
+            )}
             {item.drill.objective && (
               <div>
                 <span className="font-medium text-gray-700 dark:text-gray-300">Objective: </span>

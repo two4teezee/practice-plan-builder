@@ -25,8 +25,6 @@ export async function exportPracticePlanToPDF(plan: PracticePlan) {
   doc.text(`Duration: ${plan.duration}`, 20, y);
   y += 7;
   doc.text(`Location: ${plan.location}`, 20, y);
-  y += 7;
-  doc.text(`Coach: ${plan.coach}`, 20, y);
   y += 12;
 
   if (plan.description) {
@@ -164,12 +162,6 @@ export async function exportPracticePlanToWord(plan: PracticePlan) {
             new TextRun(plan.location),
           ],
         }),
-        new Paragraph({
-          children: [
-            new TextRun({ text: 'Coach: ', bold: true }),
-            new TextRun(plan.coach),
-          ],
-        }),
         new Paragraph(''),
         plan.description ? new Paragraph({
           children: [new TextRun({ text: plan.description, italics: true })],
@@ -253,7 +245,6 @@ export function printPracticePlan(plan: PracticePlan) {
         <p><strong>Date:</strong> ${format(practiceDate, 'MMMM d, yyyy')}</p>
         <p><strong>Duration:</strong> ${plan.duration}</p>
         <p><strong>Location:</strong> ${plan.location}</p>
-        <p><strong>Coach:</strong> ${plan.coach}</p>
       </div>
       ${plan.description ? `<p><em>${plan.description}</em></p>` : ''}
       ${plan.equipment ? `<div class="equipment"><strong>Equipment Needed:</strong> ${plan.equipment}</div>` : ''}

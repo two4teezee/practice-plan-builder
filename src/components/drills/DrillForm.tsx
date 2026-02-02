@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { Button } from '@/components/ui/Button';
+import { EquipmentPicker } from '@/components/ui/EquipmentPicker';
 import { Drill, DRILL_CATEGORIES, SKILL_FOCUSES, DRILL_DURATIONS } from '@/lib/types';
 import { Save, X } from 'lucide-react';
 
@@ -151,13 +152,10 @@ export function DrillForm({ drill, onSave, onCancel }: DrillFormProps) {
         rows={2}
       />
 
-      <Textarea
-        id="equipment"
+      <EquipmentPicker
         label="Equipment"
         value={formData.equipment}
-        onChange={(e) => setFormData({ ...formData, equipment: e.target.value })}
-        placeholder="Equipment needed (e.g., Pucks, Cones, Nets)"
-        rows={2}
+        onChange={(value) => setFormData({ ...formData, equipment: value })}
       />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
