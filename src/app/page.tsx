@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
 import { db } from '@/lib/db';
 import { 
@@ -8,9 +8,13 @@ import {
   PracticePlanDrill, 
   Drill,
   PRACTICE_DURATIONS, 
-  COACHES,
   PracticeDuration,
-  Coach 
+  getEffectiveDuration,
+  parseDurationToSeconds,
+  parsePracticeDurationToSeconds,
+  parseEquipmentString,
+  equipmentSelectionsToString,
+  EQUIPMENT_OPTIONS
 } from '@/lib/types';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
@@ -29,47 +33,142 @@ import {
   Trash2
 } from 'lucide-react';
 
+const DRAFT_STORAGE_KEY = 'practice-plan-draft';
+
+interface DraftData {
+  formData: {
+    name: string;
+    description: string;
+    date: string;
+    duration: PracticeDuration;
+    location: string;
+    notes: string;
+  };
+  drills: PracticePlanDrill[];
+}
+
+const getDefaultFormData = () => ({
+  name: format(new Date(), 'MMMM d, yyyy') + ' Practice',
+  description: '',
+  date: format(new Date(), 'yyyy-MM-dd'),
+  duration: '50 minutes' as PracticeDuration,
+  location: 'Hylo Park Arena',
+  notes: '',
+});
+
 export default function CreatePracticePlanPage() {
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(false);
   
-  const [formData, setFormData] = useState({
-    name: format(new Date(), 'MMMM d, yyyy') + ' Practice',
-    description: '',
-    date: format(new Date(), 'yyyy-MM-dd'),
-    duration: '60 minutes' as PracticeDuration,
-    location: 'Hylo Park Arena',
-    coach: 'Coach 1' as Coach,
-    notes: '',
-  });
-  
+  const [formData, setFormData] = useState(getDefaultFormData);
   const [drills, setDrills] = useState<PracticePlanDrill[]>([]);
 
-  // Calculate total drill time
+  // Load draft from localStorage on mount, or add default drill if no draft
+  useEffect(() => {
+    const initializePlan = async () => {
+      try {
+        const saved = localStorage.getItem(DRAFT_STORAGE_KEY);
+        if (saved) {
+          // Load existing draft
+          const draft: DraftData = JSON.parse(saved);
+          setFormData(draft.formData);
+          setDrills(draft.drills);
+        } else {
+          // No draft - add the default "Setup Ice and Warm Ups" drill
+          const setupDrill = await db.drills.where('name').equals('Setup Ice and Warm Ups').first();
+          if (setupDrill && setupDrill.id) {
+            const defaultDrill: PracticePlanDrill = {
+              id: `drill-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              drillId: setupDrill.id,
+              drill: setupDrill,
+              order: 1,
+            };
+            setDrills([defaultDrill]);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to initialize practice plan:', error);
+      }
+      setIsLoaded(true);
+    };
+    
+    initializePlan();
+  }, []);
+
+  // Save draft to localStorage whenever formData or drills change
+  useEffect(() => {
+    if (!isLoaded) return; // Don't save until initial load is complete
+    
+    try {
+      const draft: DraftData = { formData, drills };
+      localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+    } catch (error) {
+      console.error('Failed to save draft:', error);
+    }
+  }, [formData, drills, isLoaded]);
+
+  // Clear the draft from localStorage
+  const clearDraft = useCallback(() => {
+    try {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+    } catch (error) {
+      console.error('Failed to clear draft:', error);
+    }
+  }, []);
+
+  // Calculate total drill time (using custom durations if set)
   const totalDrillTime = useMemo(() => {
     return drills.reduce((acc, d) => {
-      const [min, sec] = d.drill.duration.split(':').map(Number);
-      return acc + min * 60 + sec;
+      const duration = getEffectiveDuration(d);
+      return acc + parseDurationToSeconds(duration);
     }, 0);
   }, [drills]);
 
+  // Calculate available practice time based on selected duration
+  const availablePracticeTime = useMemo(() => {
+    return parsePracticeDurationToSeconds(formData.duration);
+  }, [formData.duration]);
+
+  // Calculate remaining time
+  const remainingTime = availablePracticeTime - totalDrillTime;
+
   const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+    const absSeconds = Math.abs(seconds);
+    const mins = Math.floor(absSeconds / 60);
+    const secs = absSeconds % 60;
+    const sign = seconds < 0 ? '-' : '';
+    return `${sign}${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Auto-calculate equipment
+  // Auto-calculate equipment (take max quantity for each type across all drills)
   const equipment = useMemo(() => {
-    const allEquipment = drills
-      .map((d) => d.drill.equipment)
-      .filter(Boolean)
-      .join(', ');
+    const maxQuantities = new Map<string, number>();
     
-    // Remove duplicates
-    const unique = [...new Set(allEquipment.split(/,\s*/).filter(Boolean))];
-    return unique.join(', ');
+    // Go through each drill's equipment
+    for (const d of drills) {
+      if (!d.drill.equipment) continue;
+      
+      const selections = parseEquipmentString(d.drill.equipment);
+      
+      // For each equipment item, keep the maximum quantity
+      for (const selection of selections) {
+        const current = maxQuantities.get(selection.item) || 0;
+        if (selection.quantity > current) {
+          maxQuantities.set(selection.item, selection.quantity);
+        }
+      }
+    }
+    
+    // Convert back to string format
+    const consolidatedSelections = Array.from(maxQuantities.entries())
+      .map(([item, quantity]) => ({ 
+        item: item as typeof EQUIPMENT_OPTIONS[number], 
+        quantity 
+      }));
+    
+    return equipmentSelectionsToString(consolidatedSelections);
   }, [drills]);
 
   const handleAddDrill = (drill: Drill) => {
@@ -96,6 +195,33 @@ export default function CreatePracticePlanPage() {
     setDrills(reordered);
   };
 
+  const handleUpdateDuration = (id: string, duration: string) => {
+    setDrills(drills.map((d) => 
+      d.id === id ? { ...d, customDuration: duration } : d
+    ));
+  };
+
+  // Helper to add the default "Setup Ice and Warm Ups" drill
+  const addDefaultSetupDrill = useCallback(async () => {
+    try {
+      const setupDrill = await db.drills.where('name').equals('Setup Ice and Warm Ups').first();
+      if (setupDrill && setupDrill.id) {
+        const defaultDrill: PracticePlanDrill = {
+          id: `drill-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          drillId: setupDrill.id,
+          drill: setupDrill,
+          order: 1,
+        };
+        setDrills([defaultDrill]);
+      } else {
+        setDrills([]);
+      }
+    } catch (error) {
+      console.error('Failed to add default drill:', error);
+      setDrills([]);
+    }
+  }, []);
+
   const handleSave = async () => {
     if (drills.length === 0) {
       alert('Please add at least one drill to the practice plan.');
@@ -111,7 +237,6 @@ export default function CreatePracticePlanPage() {
         date: new Date(formData.date),
         duration: formData.duration,
         location: formData.location,
-        coach: formData.coach,
         drills: drills,
         notes: formData.notes,
         equipment: equipment,
@@ -120,6 +245,14 @@ export default function CreatePracticePlanPage() {
       };
 
       await db.practicePlans.add(practicePlan);
+      
+      // Clear draft and reset form after successful save
+      clearDraft();
+      setFormData(getDefaultFormData());
+      
+      // Re-add the default setup drill for the next practice plan
+      await addDefaultSetupDrill();
+      
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (error) {
@@ -130,23 +263,17 @@ export default function CreatePracticePlanPage() {
     }
   };
 
-  const handleClear = () => {
+  const handleClear = async () => {
     if (confirm('Are you sure you want to clear the practice plan?')) {
-      setFormData({
-        name: format(new Date(), 'MMMM d, yyyy') + ' Practice',
-        description: '',
-        date: format(new Date(), 'yyyy-MM-dd'),
-        duration: '60 minutes',
-        location: 'Hylo Park Arena',
-        coach: 'Coach 1',
-        notes: '',
-      });
-      setDrills([]);
+      clearDraft();
+      setFormData(getDefaultFormData());
+      
+      // Re-add the default setup drill
+      await addDefaultSetupDrill();
     }
   };
 
   const durationOptions = PRACTICE_DURATIONS.map((d) => ({ value: d, label: d }));
-  const coachOptions = COACHES.map((c) => ({ value: c, label: c }));
 
   const addedDrillIds = drills.map((d) => d.drillId);
 
@@ -216,14 +343,6 @@ export default function CreatePracticePlanPage() {
                 placeholder="Enter location"
               />
 
-              <Select
-                id="coach"
-                label="Coach"
-                value={formData.coach}
-                onChange={(e) => setFormData({ ...formData, coach: e.target.value as Coach })}
-                options={coachOptions}
-              />
-
               <Textarea
                 id="notes"
                 label="Notes"
@@ -279,9 +398,25 @@ export default function CreatePracticePlanPage() {
                     ({drills.length} drills)
                   </span>
                 </h2>
-                <div className="flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  <Clock className="w-4 h-4" />
-                  <span>Total time: {formatTime(totalDrillTime)}</span>
+                <div className="flex items-center gap-3 text-sm mt-1">
+                  <div className="flex items-center gap-1 text-gray-500 dark:text-gray-400">
+                    <Clock className="w-4 h-4" />
+                    <span>Used: {formatTime(totalDrillTime)}</span>
+                  </div>
+                  <span className="text-gray-300 dark:text-gray-600">|</span>
+                  <div className="flex items-center gap-1 text-gray-500 dark:text-gray-400">
+                    <span>Available: {formatTime(availablePracticeTime)}</span>
+                  </div>
+                  <span className="text-gray-300 dark:text-gray-600">|</span>
+                  <div className={`flex items-center gap-1 font-medium ${
+                    remainingTime < 0 
+                      ? 'text-red-600 dark:text-red-400' 
+                      : remainingTime < 300 
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-green-600 dark:text-green-400'
+                  }`}>
+                    <span>Remaining: {formatTime(remainingTime)}</span>
+                  </div>
                 </div>
               </div>
               <Button onClick={() => setIsPickerOpen(true)}>
@@ -294,6 +429,7 @@ export default function CreatePracticePlanPage() {
               drills={drills}
               onReorder={handleReorderDrills}
               onRemove={handleRemoveDrill}
+              onUpdateDuration={handleUpdateDuration}
               onViewDetails={() => {}}
             />
           </Card>
@@ -305,7 +441,7 @@ export default function CreatePracticePlanPage() {
         isOpen={isPickerOpen}
         onClose={() => setIsPickerOpen(false)}
         title="Add Drill to Practice"
-        size="lg"
+        size="fixed"
       >
         <DrillPicker onAdd={handleAddDrill} addedDrillIds={addedDrillIds} />
       </Modal>

@@ -9,7 +9,7 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
-  size?: 'sm' | 'md' | 'lg' | 'xl';
+  size?: 'sm' | 'md' | 'lg' | 'xl' | 'fixed';
 }
 
 export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalProps) {
@@ -27,10 +27,11 @@ export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalPr
   if (!isOpen) return null;
 
   const sizes = {
-    sm: 'max-w-md',
-    md: 'max-w-lg',
-    lg: 'max-w-2xl',
-    xl: 'max-w-4xl',
+    sm: 'max-w-md max-h-[90vh]',
+    md: 'max-w-lg max-h-[90vh]',
+    lg: 'max-w-2xl max-h-[90vh]',
+    xl: 'max-w-4xl max-h-[90vh]',
+    fixed: 'w-[90vw] max-w-3xl h-[80vh]',
   };
 
   return (
@@ -44,10 +45,10 @@ export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalPr
       {/* Modal */}
       <div 
         className={`
-          relative w-full ${sizes[size]}
+          relative ${sizes[size]}
           bg-white dark:bg-gray-900 
           rounded-2xl shadow-2xl
-          max-h-[90vh] overflow-hidden
+          overflow-hidden
           flex flex-col
         `}
       >
@@ -62,7 +63,7 @@ export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalPr
         </div>
         
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-6 min-h-0">
           {children}
         </div>
       </div>
