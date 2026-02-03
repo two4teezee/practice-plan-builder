@@ -30,6 +30,7 @@ const categoryColors: Record<string, string> = {
   Passing: 'bg-green-200 text-green-700 dark:bg-green-900 dark:text-green-300 border-green-400 dark:border-green-600',
   Defensive: 'bg-purple-200 text-purple-700 dark:bg-purple-900 dark:text-purple-300 border-purple-400 dark:border-purple-600',
   Offensive: 'bg-orange-200 text-orange-700 dark:bg-orange-900 dark:text-orange-300 border-orange-400 dark:border-orange-600',
+  Scrimmage: 'bg-cyan-200 text-cyan-700 dark:bg-cyan-900 dark:text-cyan-300 border-cyan-400 dark:border-cyan-600',
   Other: 'bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-gray-400 dark:border-gray-600',
 };
 
@@ -359,18 +360,29 @@ export function PracticeTimeline({ timeline, practiceDuration }: PracticeTimelin
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-500">
-            {timeMarkers.filter((_, i) => i % 2 === 0 || timeMarkers.length <= 6).map((minutes, i, arr) => (
-              <span key={minutes} className="tabular-nums">
-                {formatMinutes(minutes)}{i < arr.length - 1 ? ' · ' : ''}
-              </span>
-            ))}
-          </div>
-          <span className={`text-xs font-medium ${overTime ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}>
-            {secondsToDurationString(totalTimelineSeconds)} / {practiceDuration}
-          </span>
-        </div>
+        <span className={`text-xs font-medium ${overTime ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}>
+          {secondsToDurationString(totalTimelineSeconds)} / {practiceDuration}
+        </span>
+      </div>
+
+      {/* Time markers row - aligned with grid lines */}
+      <div className="relative h-4 mb-0.5">
+        {timeMarkers.map((minutes) => {
+          const totalMinutes = totalPracticeSeconds / 60;
+          const leftPercent = (minutes / totalMinutes) * 100;
+          return (
+            <span
+              key={minutes}
+              className="absolute text-[10px] tabular-nums text-gray-400 dark:text-gray-500"
+              style={{ 
+                left: `${leftPercent}%`,
+                transform: minutes === 0 ? 'translateX(0)' : minutes === totalMinutes ? 'translateX(-100%)' : 'translateX(-50%)',
+              }}
+            >
+              {formatMinutes(minutes)}
+            </span>
+          );
+        })}
       </div>
 
       {/* Timeline track */}
@@ -379,13 +391,16 @@ export function PracticeTimeline({ timeline, practiceDuration }: PracticeTimelin
         style={{ height: trackHeight }}
       >
         {/* Grid lines */}
-        {timeMarkers.map((minutes) => (
-          <div
-            key={minutes}
-            className="absolute top-0 bottom-0 w-px bg-gray-200 dark:bg-gray-700"
-            style={{ left: `${(minutes / (totalPracticeSeconds / 60)) * 100}%` }}
-          />
-        ))}
+        {timeMarkers.map((minutes) => {
+          const totalMinutes = totalPracticeSeconds / 60;
+          return (
+            <div
+              key={minutes}
+              className="absolute top-0 bottom-0 w-px bg-gray-200 dark:bg-gray-700"
+              style={{ left: `${(minutes / totalMinutes) * 100}%` }}
+            />
+          );
+        })}
 
         {/* Timeline blocks */}
         {timelineBlocks.map((block) => {
