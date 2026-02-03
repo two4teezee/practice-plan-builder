@@ -1,4 +1,4 @@
-export type DrillCategory = 'Admin' | 'Skating' | 'Shooting' | 'Passing' | 'Defensive' | 'Offensive' | 'Scrimmage' | 'Other';
+export type DrillCategory = 'Admin' | 'Skating' | 'Shooting' | 'Passing' | 'Defensive' | 'Offensive' | 'Goalie' | 'Scrimmage' | 'Other';
 export type SkillFocus = 'Skating' | 'Shooting' | 'Passing' | 'Defensive' | 'Offensive' | 'Other';
 export type PracticeDuration = '30 minutes' | '45 minutes' | '50 minutes' | '60 minutes' | '75 minutes' | '90 minutes';
 
@@ -235,7 +235,7 @@ export interface PracticePlan {
   updatedAt: Date;
 }
 
-export const DRILL_CATEGORIES: DrillCategory[] = ['Admin', 'Skating', 'Shooting', 'Passing', 'Defensive', 'Offensive', 'Scrimmage', 'Other'];
+export const DRILL_CATEGORIES: DrillCategory[] = ['Admin', 'Skating', 'Shooting', 'Passing', 'Defensive', 'Offensive', 'Goalie', 'Scrimmage', 'Other'];
 
 // Equipment options for drills
 export const EQUIPMENT_OPTIONS = [

@@ -20,6 +20,7 @@ export function DrillCard({ drill, onClick, onAdd, showAddButton = false }: Dril
     Passing: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
     Defensive: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
     Offensive: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+    Goalie: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
     Scrimmage: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400',
     Other: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400',
   };

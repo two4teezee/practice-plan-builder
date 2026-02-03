@@ -76,6 +76,35 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
   const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [newVariation, setNewVariation] = useState('');
+
+  // Parse variations string into array
+  const variationsList = useMemo(() => {
+    if (!formData.variations) return [];
+    return formData.variations.split('\n').filter(v => v.trim() !== '');
+  }, [formData.variations]);
+
+  // Update variations from array
+  const updateVariations = useCallback((variations: string[]) => {
+    setFormData(prev => ({ ...prev, variations: variations.join('\n') }));
+  }, []);
+
+  const addVariation = useCallback(() => {
+    if (newVariation.trim()) {
+      updateVariations([...variationsList, newVariation.trim()]);
+      setNewVariation('');
+    }
+  }, [newVariation, variationsList, updateVariations]);
+
+  const removeVariation = useCallback((index: number) => {
+    updateVariations(variationsList.filter((_, i) => i !== index));
+  }, [variationsList, updateVariations]);
+
+  const updateVariationText = useCallback((index: number, text: string) => {
+    const updated = [...variationsList];
+    updated[index] = text;
+    updateVariations(updated);
+  }, [variationsList, updateVariations]);
 
   // Get form data from drill or defaults
   const getDrillFormData = useCallback((d: Drill): FormData => ({
@@ -227,193 +256,186 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-2">
-      {/* Main layout: Form fields on left, Sketch preview on right */}
-      <div className="grid grid-cols-[1fr_280px] gap-4">
-        {/* Left column - Form fields */}
-        <div className="flex flex-col gap-2">
-          {/* Name, Duration, Category on single line */}
-          <div className="grid grid-cols-[1fr_auto_auto] gap-2">
-            <div>
-              <label htmlFor="name" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-                Drill Name
-              </label>
-              <input
-                id="name"
-                type="text"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="Enter drill name"
-                required
-                className={inputClasses}
-                style={inputStyle}
-              />
-            </div>
-            <div>
-              <label htmlFor="duration" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-                Duration
-              </label>
-              <select
-                id="duration"
-                value={formData.duration}
-                onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
-                className={inputClasses}
-                style={{ ...inputStyle, minWidth: '5rem' }}
-              >
-                {DRILL_DURATIONS.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="category" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-                Category
-              </label>
-              <select
-                id="category"
-                value={formData.category}
-                onChange={(e) => setFormData({ ...formData, category: e.target.value as typeof formData.category })}
-                className={inputClasses}
-                style={{ ...inputStyle, minWidth: '6rem' }}
-              >
-                {DRILL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-          </div>
-
-          {/* Two-column layout for text fields */}
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label htmlFor="description" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-                Description
-              </label>
-              <textarea
-                id="description"
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="Brief description of the drill"
-                rows={2}
-                className={`${inputClasses} resize-none`}
-                style={inputStyle}
-              />
-            </div>
-
-            <div>
-              <label htmlFor="objective" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-                Objective
-              </label>
-              <textarea
-                id="objective"
-                value={formData.objective}
-                onChange={(e) => setFormData({ ...formData, objective: e.target.value })}
-                placeholder="What is the goal of this drill?"
-                rows={2}
-                className={`${inputClasses} resize-none`}
-                style={inputStyle}
-              />
-            </div>
-
-            <div>
-              <label htmlFor="setup" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-                Setup
-              </label>
-              <textarea
-                id="setup"
-                value={formData.setup}
-                onChange={(e) => setFormData({ ...formData, setup: e.target.value })}
-                placeholder="How to set up the drill"
-                rows={2}
-                className={`${inputClasses} resize-none`}
-                style={inputStyle}
-              />
-            </div>
-
-            <div>
-              <label htmlFor="execution" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-                Execution
-              </label>
-              <textarea
-                id="execution"
-                value={formData.execution}
-                onChange={(e) => setFormData({ ...formData, execution: e.target.value })}
-                placeholder="How to run the drill"
-                rows={2}
-                className={`${inputClasses} resize-none`}
-                style={inputStyle}
-              />
-            </div>
-
-            <div>
-              <label htmlFor="coachingPoints" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-                Coaching Points
-              </label>
-              <textarea
-                id="coachingPoints"
-                value={formData.coachingPoints}
-                onChange={(e) => setFormData({ ...formData, coachingPoints: e.target.value })}
-                placeholder="Key points for coaches"
-                rows={2}
-                className={`${inputClasses} resize-none`}
-                style={inputStyle}
-              />
-            </div>
-
-            <div>
-              <label htmlFor="variations" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-                Variations
-              </label>
-              <textarea
-                id="variations"
-                value={formData.variations}
-                onChange={(e) => setFormData({ ...formData, variations: e.target.value })}
-                placeholder="Alternative ways to run this drill"
-                rows={2}
-                className={`${inputClasses} resize-none`}
-                style={inputStyle}
-              />
-            </div>
-          </div>
-
-          <EquipmentPicker
-            label="Equipment"
-            value={formData.equipment}
-            onChange={(value) => setFormData({ ...formData, equipment: value })}
-            compact
-            hideSummary
+      {/* Name, Duration, Category row - spans full width */}
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <label htmlFor="name" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            Drill Name
+          </label>
+          <input
+            id="name"
+            type="text"
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            placeholder="Enter drill name"
+            required
+            className={inputClasses}
+            style={inputStyle}
           />
+        </div>
+        <div>
+          <label htmlFor="duration" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            Duration
+          </label>
+          <select
+            id="duration"
+            value={formData.duration}
+            onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
+            className={`${inputClasses} w-full`}
+            style={inputStyle}
+          >
+            {DRILL_DURATIONS.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="category" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            Category
+          </label>
+          <select
+            id="category"
+            value={formData.category}
+            onChange={(e) => setFormData({ ...formData, category: e.target.value as typeof formData.category })}
+            className={`${inputClasses} w-full`}
+            style={inputStyle}
+          >
+            {DRILL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+      </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label htmlFor="videoLink" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-                Video Link
-              </label>
-              <input
-                id="videoLink"
-                type="url"
-                value={formData.videoLink}
-                onChange={(e) => setFormData({ ...formData, videoLink: e.target.value })}
-                placeholder="https://youtube.com/..."
-                className={inputClasses}
-                style={inputStyle}
-              />
+      {/* Three-column layout: Fields | Variations | Sketch (all same height) */}
+      <div className="grid grid-cols-3 gap-2">
+        {/* Column 1: Description, Setup, Execution, Coaching Points */}
+        <div className="flex flex-col gap-2">
+          <div>
+            <label htmlFor="description" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+              Description
+            </label>
+            <textarea
+              id="description"
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              placeholder="Brief description of the drill"
+              rows={2}
+              className={`${inputClasses} resize-none`}
+              style={inputStyle}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="setup" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+              Setup
+            </label>
+            <textarea
+              id="setup"
+              value={formData.setup}
+              onChange={(e) => setFormData({ ...formData, setup: e.target.value })}
+              placeholder="How to set up the drill"
+              rows={2}
+              className={`${inputClasses} resize-none`}
+              style={inputStyle}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="execution" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+              Execution
+            </label>
+            <textarea
+              id="execution"
+              value={formData.execution}
+              onChange={(e) => setFormData({ ...formData, execution: e.target.value })}
+              placeholder="How to run the drill"
+              rows={2}
+              className={`${inputClasses} resize-none`}
+              style={inputStyle}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="coachingPoints" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+              Coaching Points
+            </label>
+            <textarea
+              id="coachingPoints"
+              value={formData.coachingPoints}
+              onChange={(e) => setFormData({ ...formData, coachingPoints: e.target.value })}
+              placeholder="Key points for coaches"
+              rows={2}
+              className={`${inputClasses} resize-none`}
+              style={inputStyle}
+            />
+          </div>
+        </div>
+
+        {/* Column 2: Variations (spans full height) */}
+        <div className="flex flex-col">
+          <div className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            Variations
+          </div>
+          <div className="flex-1 flex flex-col rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 overflow-hidden">
+            {/* Variations list */}
+            <div className="flex-1 overflow-y-auto">
+              {variationsList.length > 0 ? (
+                <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+                  {variationsList.map((variation, index) => (
+                    <li key={`variation-${index}-${variation.slice(0, 10)}`} className="flex items-center gap-2 px-2 py-1.5 group">
+                      <input
+                        type="text"
+                        value={variation}
+                        onChange={(e) => updateVariationText(index, e.target.value)}
+                        className="flex-1 bg-transparent text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 rounded px-1"
+                        style={{ fontSize: '0.8125rem' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeVariation(index)}
+                        className="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Remove variation"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-500 text-xs p-4">
+                  No variations yet
+                </div>
+              )}
             </div>
-            <div>
-              <label htmlFor="pdfLink" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-                PDF Link
-              </label>
+            {/* Add new variation input */}
+            <div className="flex items-center gap-2 px-2 py-1.5 border-t border-gray-200 dark:border-gray-700 mt-auto">
               <input
-                id="pdfLink"
-                type="url"
-                value={formData.pdfLink}
-                onChange={(e) => setFormData({ ...formData, pdfLink: e.target.value })}
-                placeholder="https://example.com/drill.pdf"
-                className={inputClasses}
-                style={inputStyle}
+                type="text"
+                value={newVariation}
+                onChange={(e) => setNewVariation(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addVariation();
+                  }
+                }}
+                placeholder="Add a variation..."
+                className="flex-1 bg-transparent text-gray-900 dark:text-white text-sm placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none"
+                style={{ fontSize: '0.8125rem' }}
               />
+              <button
+                type="button"
+                onClick={addVariation}
+                disabled={!newVariation.trim()}
+                className="p-1 text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="Add variation"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Right column - Sketch preview */}
-        <div className="flex flex-col gap-2">
-          <div className="block font-medium text-gray-700 dark:text-gray-300" style={labelStyle}>
+        {/* Column 3: Sketch preview (same height as variations) */}
+        <div className="flex flex-col">
+          <div className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
             Drill Sketch
           </div>
           <div className="flex-1 flex flex-col rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 overflow-hidden">
@@ -449,6 +471,15 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
           </div>
         </div>
       </div>
+
+      {/* Equipment - spans full width */}
+      <EquipmentPicker
+        label="Equipment"
+        value={formData.equipment}
+        onChange={(value) => setFormData({ ...formData, equipment: value })}
+        compact
+        hideSummary
+      />
 
       <div className="flex flex-wrap gap-2 pt-3 border-t border-gray-200 dark:border-gray-800 mt-1">
         <Button type="button" variant="outline" onClick={handleCancelClick}>

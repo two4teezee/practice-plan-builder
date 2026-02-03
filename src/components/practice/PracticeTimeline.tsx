@@ -30,6 +30,7 @@ const categoryColors: Record<string, string> = {
   Passing: 'bg-green-200 text-green-700 dark:bg-green-900 dark:text-green-300 border-green-400 dark:border-green-600',
   Defensive: 'bg-purple-200 text-purple-700 dark:bg-purple-900 dark:text-purple-300 border-purple-400 dark:border-purple-600',
   Offensive: 'bg-orange-200 text-orange-700 dark:bg-orange-900 dark:text-orange-300 border-orange-400 dark:border-orange-600',
+  Goalie: 'bg-yellow-200 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300 border-yellow-400 dark:border-yellow-600',
   Scrimmage: 'bg-cyan-200 text-cyan-700 dark:bg-cyan-900 dark:text-cyan-300 border-cyan-400 dark:border-cyan-600',
   Other: 'bg-gray-200 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-gray-400 dark:border-gray-600',
 };
