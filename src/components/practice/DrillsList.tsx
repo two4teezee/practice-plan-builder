@@ -53,12 +53,12 @@ export function DrillsList({ drills, onReorder, onRemove, onUpdateDuration, onVi
 
   if (drills.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-center">
-        <ListOrdered className="w-12 h-12 text-gray-400 mb-4" />
-        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <ListOrdered className="w-8 h-8 text-gray-400 mb-2" />
+        <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-1">
           No drills added yet
         </h3>
-        <p className="text-gray-500 dark:text-gray-400">
+        <p className="text-xs text-gray-500 dark:text-gray-400">
           Add drills from the library to build your practice plan
         </p>
       </div>
@@ -75,7 +75,7 @@ export function DrillsList({ drills, onReorder, onRemove, onUpdateDuration, onVi
         items={drills.map((d) => d.id)}
         strategy={verticalListSortingStrategy}
       >
-        <div className="space-y-3">
+        <div className="space-y-2">
           {drills.map((drill) => (
             <SortableDrillItem
               key={drill.id}

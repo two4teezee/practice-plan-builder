@@ -11,6 +11,8 @@ import { Search, Plus, Clock, Target } from 'lucide-react';
 
 const PICKER_CATEGORY_FILTER_KEY = 'drill-picker-category-filter';
 
+type CategoryFilter = 'All' | DrillCategory;
+
 interface DrillPickerProps {
   onAdd: (drill: Drill) => void;
   addedDrillIds: number[];
@@ -18,9 +20,7 @@ interface DrillPickerProps {
 
 export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategories, setSelectedCategories] = useState<Set<DrillCategory>>(
-    new Set(DRILL_CATEGORIES)
-  );
+  const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>('All');
   const [isLoaded, setIsLoaded] = useState(false);
 
   // Load saved category filter from localStorage
@@ -28,8 +28,10 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
     try {
       const saved = localStorage.getItem(PICKER_CATEGORY_FILTER_KEY);
       if (saved) {
-        const parsed = JSON.parse(saved) as DrillCategory[];
-        setSelectedCategories(new Set(parsed));
+        const parsed = JSON.parse(saved) as CategoryFilter;
+        if (parsed === 'All' || DRILL_CATEGORIES.includes(parsed as DrillCategory)) {
+          setSelectedCategory(parsed);
+        }
       }
     } catch (error) {
       console.error('Failed to load category filter:', error);
@@ -43,25 +45,15 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
     try {
       localStorage.setItem(
         PICKER_CATEGORY_FILTER_KEY,
-        JSON.stringify(Array.from(selectedCategories))
+        JSON.stringify(selectedCategory)
       );
     } catch (error) {
       console.error('Failed to save category filter:', error);
     }
-  }, [selectedCategories, isLoaded]);
+  }, [selectedCategory, isLoaded]);
 
-  const toggleCategory = (category: DrillCategory) => {
-    setSelectedCategories((prev) => {
-      const next = new Set(prev);
-      if (next.has(category)) {
-        if (next.size > 1) {
-          next.delete(category);
-        }
-      } else {
-        next.add(category);
-      }
-      return next;
-    });
+  const selectCategory = (category: CategoryFilter) => {
+    setSelectedCategory(category);
   };
 
   const drills = useLiveQuery(
@@ -72,7 +64,7 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
   const filteredDrills = drills?.filter((drill) => {
     const matchesSearch = drill.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       drill.description.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = selectedCategories.has(drill.category);
+    const matchesCategory = selectedCategory === 'All' || drill.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
 
@@ -111,13 +103,27 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
 
       {/* Category Filter Pills */}
       <div className="flex flex-wrap gap-1.5 mb-3">
+        {/* All category pill */}
+        <button
+          type="button"
+          onClick={() => selectCategory('All')}
+          className={`
+            px-3 py-1 rounded-full text-xs font-medium border transition-all duration-200
+            ${selectedCategory === 'All'
+              ? 'bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200 border-gray-400 dark:border-gray-500'
+              : 'bg-white dark:bg-gray-800 text-gray-400 dark:text-gray-500 border-gray-200 dark:border-gray-700 opacity-50 hover:opacity-70'
+            }
+          `}
+        >
+          All
+        </button>
         {DRILL_CATEGORIES.map((category) => {
-          const isSelected = selectedCategories.has(category);
+          const isSelected = selectedCategory === category;
           return (
             <button
               type="button"
               key={category}
-              onClick={() => toggleCategory(category)}
+              onClick={() => selectCategory(category)}
               className={`
                 px-3 py-1 rounded-full text-xs font-medium border transition-all duration-200
                 ${isSelected

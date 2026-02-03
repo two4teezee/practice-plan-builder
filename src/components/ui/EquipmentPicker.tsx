@@ -7,7 +7,7 @@ import {
   equipmentSelectionsToString,
   parseEquipmentString 
 } from '@/lib/types';
-import { Plus, Minus, X } from 'lucide-react';
+import { Plus, Minus } from 'lucide-react';
 
 interface EquipmentPickerProps {
   value: string;
@@ -42,16 +42,6 @@ export function EquipmentPicker({ value, onChange, label }: EquipmentPickerProps
     setSelections(newSelections);
     
     // Convert to string and call onChange
-    const selectionsArray: EquipmentSelection[] = Array.from(newSelections.entries())
-      .map(([item, quantity]) => ({ item: item as EquipmentSelection['item'], quantity }));
-    onChange(equipmentSelectionsToString(selectionsArray));
-  };
-
-  const clearItem = (item: string) => {
-    const newSelections = new Map(selections);
-    newSelections.delete(item);
-    setSelections(newSelections);
-    
     const selectionsArray: EquipmentSelection[] = Array.from(newSelections.entries())
       .map(([item, quantity]) => ({ item: item as EquipmentSelection['item'], quantity }));
     onChange(equipmentSelectionsToString(selectionsArray));
@@ -108,11 +98,13 @@ export function EquipmentPicker({ value, onChange, label }: EquipmentPickerProps
                 }
               `}>
                 {item}
-                {quantity > 0 && (
-                  <span className="ml-1 text-xs font-bold bg-primary-200 dark:bg-primary-800 text-primary-800 dark:text-primary-200 rounded-full px-1.5 py-0.5">
-                    {quantity}
-                  </span>
-                )}
+                <span className={`ml-1 text-xs font-bold rounded-full px-1.5 py-0.5 ${
+                  isSelected 
+                    ? 'bg-primary-200 dark:bg-primary-800 text-primary-800 dark:text-primary-200' 
+                    : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                }`}>
+                  {quantity}
+                </span>
               </span>
 
               {/* Increase button */}
@@ -123,17 +115,6 @@ export function EquipmentPicker({ value, onChange, label }: EquipmentPickerProps
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
-
-              {/* Clear button (only when selected) */}
-              {isSelected && (
-                <button
-                  type="button"
-                  onClick={() => clearItem(item)}
-                  className="p-1 mr-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              )}
             </div>
           );
         })}

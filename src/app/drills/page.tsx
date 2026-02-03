@@ -14,13 +14,13 @@ import { exportDrillsLibraryToPDF, exportDrillsLibraryToWord } from '@/lib/expor
 
 const CATEGORY_FILTER_STORAGE_KEY = 'drills-category-filter';
 
+type CategoryFilter = 'All' | DrillCategory;
+
 export default function DrillsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDrill, setEditingDrill] = useState<Drill | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategories, setSelectedCategories] = useState<Set<DrillCategory>>(
-    new Set(DRILL_CATEGORIES)
-  );
+  const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>('All');
   const [isLoaded, setIsLoaded] = useState(false);
 
   // Load saved category filter from localStorage
@@ -28,8 +28,10 @@ export default function DrillsPage() {
     try {
       const saved = localStorage.getItem(CATEGORY_FILTER_STORAGE_KEY);
       if (saved) {
-        const parsed = JSON.parse(saved) as DrillCategory[];
-        setSelectedCategories(new Set(parsed));
+        const parsed = JSON.parse(saved) as CategoryFilter;
+        if (parsed === 'All' || DRILL_CATEGORIES.includes(parsed as DrillCategory)) {
+          setSelectedCategory(parsed);
+        }
       }
     } catch (error) {
       console.error('Failed to load category filter:', error);
@@ -43,26 +45,15 @@ export default function DrillsPage() {
     try {
       localStorage.setItem(
         CATEGORY_FILTER_STORAGE_KEY,
-        JSON.stringify(Array.from(selectedCategories))
+        JSON.stringify(selectedCategory)
       );
     } catch (error) {
       console.error('Failed to save category filter:', error);
     }
-  }, [selectedCategories, isLoaded]);
+  }, [selectedCategory, isLoaded]);
 
-  const toggleCategory = (category: DrillCategory) => {
-    setSelectedCategories((prev) => {
-      const next = new Set(prev);
-      if (next.has(category)) {
-        // Don't allow deselecting all categories
-        if (next.size > 1) {
-          next.delete(category);
-        }
-      } else {
-        next.add(category);
-      }
-      return next;
-    });
+  const selectCategory = (category: CategoryFilter) => {
+    setSelectedCategory(category);
   };
 
   const drills = useLiveQuery(
@@ -74,7 +65,7 @@ export default function DrillsPage() {
     const matchesSearch = drill.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       drill.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
       drill.objective.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = selectedCategories.has(drill.category);
+    const matchesCategory = selectedCategory === 'All' || drill.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
 
@@ -168,13 +159,27 @@ export default function DrillsPage() {
 
       {/* Category Filter Pills */}
       <div className="flex flex-wrap gap-2 mb-6">
+        {/* All category pill */}
+        <button
+          type="button"
+          onClick={() => selectCategory('All')}
+          className={`
+            px-4 py-2 rounded-full text-sm font-medium border transition-all duration-200
+            ${selectedCategory === 'All'
+              ? 'bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200 border-gray-400 dark:border-gray-500 border-2'
+              : 'bg-white dark:bg-gray-800 text-gray-400 dark:text-gray-500 border-gray-200 dark:border-gray-700 opacity-60 hover:opacity-80'
+            }
+          `}
+        >
+          All
+        </button>
         {DRILL_CATEGORIES.map((category) => {
-          const isSelected = selectedCategories.has(category);
+          const isSelected = selectedCategory === category;
           return (
             <button
               type="button"
               key={category}
-              onClick={() => toggleCategory(category)}
+              onClick={() => selectCategory(category)}
               className={`
                 px-4 py-2 rounded-full text-sm font-medium border transition-all duration-200
                 ${isSelected
@@ -205,14 +210,14 @@ export default function DrillsPage() {
         <div className="text-center py-12 bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800">
           <Library className="w-12 h-12 text-gray-400 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-            {searchQuery || selectedCategories.size < DRILL_CATEGORIES.length ? 'No drills found' : 'No drills yet'}
+            {searchQuery || selectedCategory !== 'All' ? 'No drills found' : 'No drills yet'}
           </h3>
           <p className="text-gray-500 dark:text-gray-400 mb-4">
-            {searchQuery || selectedCategories.size < DRILL_CATEGORIES.length
+            {searchQuery || selectedCategory !== 'All'
               ? 'Try adjusting your search or filter'
               : 'Create your first drill to get started'}
           </p>
-          {!searchQuery && selectedCategories.size === DRILL_CATEGORIES.length && (
+          {!searchQuery && selectedCategory === 'All' && (
             <Button onClick={handleNewDrill}>
               <Plus className="w-5 h-5" />
               Create First Drill

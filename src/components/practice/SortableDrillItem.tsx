@@ -49,12 +49,12 @@ export function SortableDrillItem({ item, onRemove, onUpdateDuration, onViewDeta
       ref={setNodeRef}
       style={style}
       className={`
-        bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700
+        bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700
         border-l-4 ${categoryColors[item.drill.category]}
         ${isDragging ? 'opacity-50 shadow-2xl' : 'shadow-sm'}
       `}
     >
-      <div className="flex items-center p-3 gap-3">
+      <div className="flex items-center p-2 gap-2">
         {/* Drag Handle */}
         <button
           {...attributes}
@@ -65,18 +65,18 @@ export function SortableDrillItem({ item, onRemove, onUpdateDuration, onViewDeta
         </button>
 
         {/* Order Number */}
-        <div className="w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
-          <span className="text-sm font-bold text-primary-700 dark:text-primary-300">
+        <div className="w-6 h-6 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center flex-shrink-0">
+          <span className="text-xs font-bold text-primary-700 dark:text-primary-300">
             {item.order}
           </span>
         </div>
 
         {/* Drill Info */}
         <div className="flex-1 min-w-0">
-          <h4 className="font-medium text-gray-900 dark:text-white truncate">
+          <h4 className="text-sm font-medium text-gray-900 dark:text-white truncate">
             {item.drill.name}
           </h4>
-          <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
             <span>{item.drill.category}</span>
           </div>
         </div>

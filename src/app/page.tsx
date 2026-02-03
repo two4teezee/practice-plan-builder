@@ -278,37 +278,82 @@ export default function CreatePracticePlanPage() {
   const addedDrillIds = drills.map((d) => d.drillId);
 
   return (
-    <div className="max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="mb-8">
-        <div className="flex items-center gap-3 mb-2">
-          <ClipboardList className="w-8 h-8 text-primary-600 dark:text-primary-400" />
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+    <div className="h-[calc(100vh-6rem)] flex flex-col max-w-7xl mx-auto">
+      {/* Header - Compact */}
+      <div className="flex items-center justify-between mb-3 flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <ClipboardList className="w-6 h-6 text-primary-600 dark:text-primary-400" />
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white">
             Create Practice Plan
           </h1>
         </div>
-        <p className="text-gray-600 dark:text-gray-400">
-          Build a new practice plan by selecting drills from your library
-        </p>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleClear}
+          >
+            <Trash2 className="w-4 h-4" />
+            Clear
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={isSaving}
+          >
+            <Save className="w-4 h-4" />
+            {isSaving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save Plan'}
+          </Button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      {/* Main Content - Fills available space */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 flex-1 min-h-0">
         {/* Left Column - Practice Details */}
-        <div className="xl:col-span-1 space-y-6">
-          <Card className="p-6">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-              <FileText className="w-5 h-5" />
+        <div className="xl:col-span-1 flex flex-col min-h-0">
+          <Card className="p-4 flex-1 overflow-y-auto">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+              <FileText className="w-4 h-4" />
               Practice Details
             </h2>
             
-            <div className="space-y-4">
-              <Input
-                id="name"
-                label="Practice Name"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="Enter practice name"
-              />
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <Input
+                  id="name"
+                  label="Practice Name"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="Enter practice name"
+                  className="text-sm"
+                />
+                <Input
+                  id="date"
+                  label="Date"
+                  type="date"
+                  value={formData.date}
+                  onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                  className="text-sm"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Select
+                  id="duration"
+                  label="Duration"
+                  value={formData.duration}
+                  onChange={(e) => setFormData({ ...formData, duration: e.target.value as PracticeDuration })}
+                  options={durationOptions}
+                />
+                <Input
+                  id="location"
+                  label="Location"
+                  value={formData.location}
+                  onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                  placeholder="Location"
+                  className="text-sm"
+                />
+              </div>
 
               <Textarea
                 id="description"
@@ -319,88 +364,44 @@ export default function CreatePracticePlanPage() {
                 rows={2}
               />
 
-              <Input
-                id="date"
-                label="Practice Date"
-                type="date"
-                value={formData.date}
-                onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-              />
-
-              <Select
-                id="duration"
-                label="Practice Duration"
-                value={formData.duration}
-                onChange={(e) => setFormData({ ...formData, duration: e.target.value as PracticeDuration })}
-                options={durationOptions}
-              />
-
-              <Input
-                id="location"
-                label="Location"
-                value={formData.location}
-                onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                placeholder="Enter location"
-              />
-
               <Textarea
                 id="notes"
                 label="Notes"
                 value={formData.notes}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                placeholder="Additional notes for this practice..."
-                rows={3}
+                placeholder="Additional notes..."
+                rows={2}
               />
 
               {/* Equipment Summary */}
               {equipment && (
-                <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-xl">
-                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <div className="p-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                  <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-0.5">
                     Equipment Needed
                   </p>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                  <p className="text-xs text-gray-600 dark:text-gray-400">
                     {equipment}
                   </p>
                 </div>
               )}
             </div>
           </Card>
-
-          {/* Actions */}
-          <div className="flex gap-3">
-            <Button
-              variant="outline"
-              className="flex-1"
-              onClick={handleClear}
-            >
-              <Trash2 className="w-4 h-4" />
-              Clear
-            </Button>
-            <Button
-              className="flex-1"
-              onClick={handleSave}
-              disabled={isSaving}
-            >
-              <Save className="w-4 h-4" />
-              {isSaving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save Plan'}
-            </Button>
-          </div>
         </div>
 
         {/* Right Column - Drills */}
-        <div className="xl:col-span-2">
-          <Card className="p-6">
-            <div className="flex items-center justify-between mb-4">
+        <div className="xl:col-span-2 flex flex-col min-h-0">
+          <Card className="p-4 flex-1 flex flex-col min-h-0">
+            <div className="flex items-center justify-between mb-3 flex-shrink-0">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                   Practice Drills
-                  <span className="text-sm font-normal text-gray-500 dark:text-gray-400">
+                  <span className="text-xs font-normal text-gray-500 dark:text-gray-400">
                     ({drills.length} drills)
                   </span>
                 </h2>
-                <div className="flex items-center gap-3 text-sm mt-1">
+                <div className="flex items-center gap-2 text-xs mt-0.5">
                   <div className="flex items-center gap-1 text-gray-500 dark:text-gray-400">
-                    <Clock className="w-4 h-4" />
+                    <Clock className="w-3 h-3" />
                     <span>Used: {formatTime(totalDrillTime)}</span>
                   </div>
                   <span className="text-gray-300 dark:text-gray-600">|</span>
@@ -419,22 +420,35 @@ export default function CreatePracticePlanPage() {
                   </div>
                 </div>
               </div>
-              <Button onClick={() => setIsPickerOpen(true)}>
+              <Button size="sm" onClick={() => setIsPickerOpen(true)}>
                 <Plus className="w-4 h-4" />
                 Add Drill
               </Button>
             </div>
 
-            <DrillsList
-              drills={drills}
-              onReorder={handleReorderDrills}
-              onRemove={handleRemoveDrill}
-              onUpdateDuration={handleUpdateDuration}
-              onViewDetails={() => {}}
-            />
+            <div className="flex-1 overflow-y-auto min-h-0">
+              <DrillsList
+                drills={drills}
+                onReorder={handleReorderDrills}
+                onRemove={handleRemoveDrill}
+                onUpdateDuration={handleUpdateDuration}
+                onViewDetails={() => {}}
+              />
+            </div>
           </Card>
         </div>
       </div>
+
+      {/* Timeline View - Fixed at bottom */}
+      {drills.length > 0 && (
+        <div className="flex-shrink-0 mt-3">
+          <TimelineView 
+            drills={drills} 
+            totalDuration={availablePracticeTime}
+            formatTime={formatTime}
+          />
+        </div>
+      )}
 
       {/* Drill Picker Modal */}
       <Modal
@@ -446,5 +460,140 @@ export default function CreatePracticePlanPage() {
         <DrillPicker onAdd={handleAddDrill} addedDrillIds={addedDrillIds} />
       </Modal>
     </div>
+  );
+}
+
+// Timeline View Component
+interface TimelineViewProps {
+  drills: PracticePlanDrill[];
+  totalDuration: number;
+  formatTime: (seconds: number) => string;
+}
+
+function TimelineView({ drills, totalDuration, formatTime }: TimelineViewProps) {
+  const categoryColors: Record<string, { bg: string; text: string; border: string }> = {
+    Admin: { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-700 dark:text-slate-300', border: 'border-slate-300 dark:border-slate-600' },
+    Skating: { bg: 'bg-blue-100 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-300', border: 'border-blue-300 dark:border-blue-700' },
+    Shooting: { bg: 'bg-red-100 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-300', border: 'border-red-300 dark:border-red-700' },
+    Passing: { bg: 'bg-green-100 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-300', border: 'border-green-300 dark:border-green-700' },
+    Defensive: { bg: 'bg-purple-100 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-300', border: 'border-purple-300 dark:border-purple-700' },
+    Offensive: { bg: 'bg-orange-100 dark:bg-orange-900/30', text: 'text-orange-700 dark:text-orange-300', border: 'border-orange-300 dark:border-orange-700' },
+    Other: { bg: 'bg-gray-100 dark:bg-gray-800', text: 'text-gray-700 dark:text-gray-300', border: 'border-gray-300 dark:border-gray-600' },
+  };
+
+  // Calculate the total drill time
+  const totalDrillTime = drills.reduce((acc, d) => {
+    const duration = getEffectiveDuration(d);
+    return acc + parseDurationToSeconds(duration);
+  }, 0);
+
+  // Use the larger of total duration or total drill time for the timeline width
+  const timelineWidth = Math.max(totalDuration, totalDrillTime);
+
+  // Calculate cumulative start times for each drill
+  let cumulativeTime = 0;
+  const drillsWithTiming = drills.map((drill) => {
+    const duration = parseDurationToSeconds(getEffectiveDuration(drill));
+    const startTime = cumulativeTime;
+    cumulativeTime += duration;
+    return {
+      ...drill,
+      startTime,
+      duration,
+    };
+  });
+
+  // Generate time markers (every 5 minutes)
+  const timeMarkers: number[] = [];
+  for (let t = 0; t <= timelineWidth; t += 300) {
+    timeMarkers.push(t);
+  }
+  // Always include the end time if it doesn't align with a marker
+  if (timelineWidth % 300 !== 0) {
+    timeMarkers.push(timelineWidth);
+  }
+
+  return (
+    <Card className="p-3">
+      <div className="flex items-center gap-2 mb-2">
+        <Clock className="w-3 h-3 text-gray-500" />
+        <h3 className="text-xs font-semibold text-gray-900 dark:text-white">
+          Practice Timeline
+        </h3>
+        {/* Inline Legend */}
+        <div className="flex flex-wrap gap-1.5 ml-auto">
+          {Array.from(new Set(drills.map(d => d.drill.category))).map((category) => {
+            const colors = categoryColors[category] || categoryColors.Other;
+            return (
+              <span 
+                key={category}
+                className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${colors.bg} ${colors.text}`}
+              >
+                {category}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+      
+      <div className="relative">
+        {/* Time markers */}
+        <div className="relative h-4 text-[10px] text-gray-500 dark:text-gray-400">
+          {timeMarkers.map((t) => (
+            <span 
+              key={t} 
+              className="absolute transform -translate-x-1/2"
+              style={{ left: `${(t / timelineWidth) * 100}%` }}
+            >
+              {formatTime(t)}
+            </span>
+          ))}
+        </div>
+
+        {/* Timeline bar */}
+        <div className="relative h-8 bg-gray-100 dark:bg-gray-800 rounded-md overflow-hidden">
+          {/* Practice duration background */}
+          <div 
+            className="absolute inset-y-0 left-0 bg-gray-50 dark:bg-gray-700/50 border-r-2 border-dashed border-gray-300 dark:border-gray-600"
+            style={{ width: `${Math.min((totalDuration / timelineWidth) * 100, 100)}%` }}
+          />
+          
+          {/* Drill blocks */}
+          {drillsWithTiming.map((drill) => {
+            const leftPercent = (drill.startTime / timelineWidth) * 100;
+            const widthPercent = (drill.duration / timelineWidth) * 100;
+            const colors = categoryColors[drill.drill.category] || categoryColors.Other;
+            
+            return (
+              <div
+                key={drill.id}
+                className={`absolute inset-y-0.5 ${colors.bg} ${colors.border} border rounded flex items-center justify-center overflow-hidden transition-all duration-200 hover:scale-[1.02] hover:z-10`}
+                style={{
+                  left: `${leftPercent}%`,
+                  width: `${widthPercent}%`,
+                  minWidth: '2px',
+                }}
+                title={`${drill.drill.name} (${getEffectiveDuration(drill)})`}
+              >
+                <span className={`${colors.text} text-[10px] font-medium truncate px-0.5`}>
+                  {widthPercent > 10 ? drill.drill.name : ''}
+                </span>
+              </div>
+            );
+          })}
+
+          {/* Overflow indicator (if drills exceed practice duration) */}
+          {totalDrillTime > totalDuration && (
+            <div 
+              className="absolute inset-y-0 bg-red-100/50 dark:bg-red-900/20 border-l-2 border-red-400 dark:border-red-600"
+              style={{ 
+                left: `${(totalDuration / timelineWidth) * 100}%`,
+                width: `${((totalDrillTime - totalDuration) / timelineWidth) * 100}%`
+              }}
+            />
+          )}
+        </div>
+      </div>
+    </Card>
   );
 }
