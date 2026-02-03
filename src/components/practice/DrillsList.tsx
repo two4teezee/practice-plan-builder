@@ -15,19 +15,41 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { PracticePlanDrill } from '@/lib/types';
-import { SortableDrillItem } from './SortableDrillItem';
+import { TimelineItem, DrillItem } from '@/lib/types';
+import { SortableTimelineItem } from './SortableTimelineItem';
 import { ListOrdered } from 'lucide-react';
 
 interface DrillsListProps {
-  drills: PracticePlanDrill[];
-  onReorder: (drills: PracticePlanDrill[]) => void;
+  timeline: TimelineItem[];
+  onReorder: (items: TimelineItem[]) => void;
+  onReorderGroup: (parallelId: string, groupId: string, items: TimelineItem[]) => void;
   onRemove: (id: string) => void;
   onUpdateDuration: (id: string, duration: string) => void;
-  onViewDetails: (item: PracticePlanDrill) => void;
+  onViewDetails: (item: DrillItem) => void;
+  onAddDrillToGroup: (groupPath: string[] | null) => void;
+  onAddParallelSplit: () => void;
+  onAddNestedSplit: (parallelId: string, groupId: string) => void;
+  onAddGroup: (parallelId: string) => void;
+  onRemoveGroup: (parallelId: string, groupId: string) => void;
+  onRemoveParallelSplit: (id: string) => void;
+  onUpdateGroupName: (parallelId: string, groupId: string, name: string) => void;
 }
 
-export function DrillsList({ drills, onReorder, onRemove, onUpdateDuration, onViewDetails }: DrillsListProps) {
+export function DrillsList({ 
+  timeline, 
+  onReorder, 
+  onReorderGroup,
+  onRemove, 
+  onUpdateDuration, 
+  onViewDetails,
+  onAddDrillToGroup,
+  onAddParallelSplit,
+  onAddNestedSplit,
+  onAddGroup,
+  onRemoveGroup,
+  onRemoveParallelSplit,
+  onUpdateGroupName,
+}: DrillsListProps) {
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -39,26 +61,24 @@ export function DrillsList({ drills, onReorder, onRemove, onUpdateDuration, onVi
     const { active, over } = event;
 
     if (over && active.id !== over.id) {
-      const oldIndex = drills.findIndex((d) => d.id === active.id);
-      const newIndex = drills.findIndex((d) => d.id === over.id);
+      const oldIndex = timeline.findIndex((item) => item.id === active.id);
+      const newIndex = timeline.findIndex((item) => item.id === over.id);
       
-      const reordered = arrayMove(drills, oldIndex, newIndex).map((d, i) => ({
-        ...d,
-        order: i + 1,
-      }));
-      
-      onReorder(reordered);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        const reordered = arrayMove(timeline, oldIndex, newIndex);
+        onReorder(reordered);
+      }
     }
   }
 
-  if (drills.length === 0) {
+  if (timeline.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-8 text-center">
-        <ListOrdered className="w-8 h-8 text-gray-400 mb-2" />
-        <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-1">
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <ListOrdered className="w-12 h-12 text-gray-400 mb-4" />
+        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
           No drills added yet
         </h3>
-        <p className="text-xs text-gray-500 dark:text-gray-400">
+        <p className="text-gray-500 dark:text-gray-400">
           Add drills from the library to build your practice plan
         </p>
       </div>
@@ -72,17 +92,25 @@ export function DrillsList({ drills, onReorder, onRemove, onUpdateDuration, onVi
       onDragEnd={handleDragEnd}
     >
       <SortableContext
-        items={drills.map((d) => d.id)}
+        items={timeline.map((item) => item.id)}
         strategy={verticalListSortingStrategy}
       >
-        <div className="space-y-2">
-          {drills.map((drill) => (
-            <SortableDrillItem
-              key={drill.id}
-              item={drill}
+        <div className="space-y-3">
+          {timeline.map((item, index) => (
+            <SortableTimelineItem
+              key={item.id}
+              item={item}
+              index={index}
               onRemove={onRemove}
               onUpdateDuration={onUpdateDuration}
               onViewDetails={onViewDetails}
+              onReorderGroup={onReorderGroup}
+              onAddDrillToGroup={onAddDrillToGroup}
+              onAddNestedSplit={onAddNestedSplit}
+              onAddGroup={onAddGroup}
+              onRemoveGroup={onRemoveGroup}
+              onRemoveParallelSplit={onRemoveParallelSplit}
+              onUpdateGroupName={onUpdateGroupName}
             />
           ))}
         </div>

@@ -30,6 +30,49 @@ export interface PracticePlanDrill {
   order: number;
 }
 
+// ============================================
+// Timeline Types for Branching/Merging Support
+// ============================================
+
+// A timeline item can be either a single drill or a parallel split
+export type TimelineItem = DrillItem | ParallelSplitItem;
+
+// A single drill in the timeline
+export interface DrillItem {
+  type: 'drill';
+  id: string;
+  drillId: number;
+  drill: Drill;
+  customDuration?: string;
+  customNotes?: string;
+}
+
+// A parallel split containing multiple concurrent groups
+export interface ParallelSplitItem {
+  type: 'parallel';
+  id: string;
+  groups: PracticeGroup[];
+}
+
+// A group within a parallel split (can contain nested splits)
+export interface PracticeGroup {
+  id: string;
+  name: string;           // "Group A", "Group B", etc.
+  color: string;          // Visual differentiation
+  items: TimelineItem[];  // Recursive - allows nested splits
+}
+
+// Default colors for practice groups
+export const GROUP_COLORS = [
+  '#3B82F6', // Blue
+  '#10B981', // Green
+  '#F59E0B', // Amber
+  '#EF4444', // Red
+] as const;
+
+// Default group names
+export const GROUP_NAMES = ['Group A', 'Group B', 'Group C', 'Group D'] as const;
+
 // Helper to get the effective duration for a practice plan drill
 export function getEffectiveDuration(item: PracticePlanDrill): string {
   return item.customDuration || item.drill.duration;
@@ -47,6 +90,135 @@ export function parsePracticeDurationToSeconds(duration: PracticeDuration): numb
   return minutes * 60;
 }
 
+// Get duration for a single drill item
+export function getDrillItemDuration(item: DrillItem): number {
+  return parseDurationToSeconds(item.customDuration || item.drill.duration);
+}
+
+// Get duration for a timeline item (recursive for parallel blocks)
+export function getTimelineItemDuration(item: TimelineItem): number {
+  if (item.type === 'drill') {
+    return getDrillItemDuration(item);
+  }
+  // For parallel: use longest group (wait for all to finish)
+  if (item.groups.length === 0) return 0;
+  return Math.max(...item.groups.map(g => getGroupDuration(g)));
+}
+
+// Get total duration for a practice group
+export function getGroupDuration(group: PracticeGroup): number {
+  return group.items.reduce((sum, item) => sum + getTimelineItemDuration(item), 0);
+}
+
+// Get total duration for a timeline
+export function getTimelineDuration(timeline: TimelineItem[]): number {
+  return timeline.reduce((sum, item) => sum + getTimelineItemDuration(item), 0);
+}
+
+// Convert seconds to duration string (mm:ss)
+export function secondsToDurationString(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Flatten timeline to get all drills (for equipment calculation, etc.)
+export function flattenTimelineDrills(timeline: TimelineItem[]): DrillItem[] {
+  const drills: DrillItem[] = [];
+  for (const item of timeline) {
+    if (item.type === 'drill') {
+      drills.push(item);
+    } else {
+      for (const group of item.groups) {
+        drills.push(...flattenTimelineDrills(group.items));
+      }
+    }
+  }
+  return drills;
+}
+
+// Convert legacy PracticePlanDrill[] to TimelineItem[]
+export function convertDrillsToTimeline(drills: PracticePlanDrill[]): TimelineItem[] {
+  return drills
+    .sort((a, b) => a.order - b.order)
+    .map(drill => ({
+      type: 'drill' as const,
+      id: drill.id,
+      drillId: drill.drillId,
+      drill: drill.drill,
+      customDuration: drill.customDuration,
+      customNotes: drill.customNotes,
+    }));
+}
+
+// Convert TimelineItem[] back to legacy PracticePlanDrill[] (flattened)
+export function convertTimelineToDrills(timeline: TimelineItem[]): PracticePlanDrill[] {
+  const drillItems = flattenTimelineDrills(timeline);
+  return drillItems.map((item, index) => ({
+    id: item.id,
+    drillId: item.drillId,
+    drill: item.drill,
+    customDuration: item.customDuration,
+    customNotes: item.customNotes,
+    order: index + 1,
+  }));
+}
+
+// Create a new parallel split with default groups
+export function createParallelSplit(groupCount: number = 2): ParallelSplitItem {
+  const groups: PracticeGroup[] = [];
+  for (let i = 0; i < Math.min(groupCount, 4); i++) {
+    groups.push({
+      id: `group-${Date.now()}-${Math.random().toString(36).slice(2, 9)}-${i}`,
+      name: GROUP_NAMES[i],
+      color: GROUP_COLORS[i],
+      items: [],
+    });
+  }
+  return {
+    type: 'parallel',
+    id: `parallel-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    groups,
+  };
+}
+
+// Create a new drill item
+export function createDrillItem(drill: Drill): DrillItem {
+  return {
+    type: 'drill',
+    id: `drill-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    drillId: drill.id!,
+    drill,
+  };
+}
+
+// Add a group to a parallel split (max 4)
+export function addGroupToSplit(split: ParallelSplitItem): ParallelSplitItem {
+  if (split.groups.length >= 4) return split;
+  const newIndex = split.groups.length;
+  return {
+    ...split,
+    groups: [
+      ...split.groups,
+      {
+        id: `group-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        name: GROUP_NAMES[newIndex],
+        color: GROUP_COLORS[newIndex],
+        items: [],
+      },
+    ],
+  };
+}
+
+// Remove a group from a parallel split (min 2)
+export function removeGroupFromSplit(split: ParallelSplitItem, groupId: string): ParallelSplitItem {
+  if (split.groups.length <= 2) return split;
+  return {
+    ...split,
+    groups: split.groups.filter(g => g.id !== groupId),
+  };
+}
+
 export interface PracticePlan {
   id?: number;
   name: string;
@@ -54,7 +226,8 @@ export interface PracticePlan {
   date: Date;
   duration: PracticeDuration;
   location: string;
-  drills: PracticePlanDrill[];
+  drills: PracticePlanDrill[]; // Legacy: kept for backward compatibility
+  timeline: TimelineItem[];    // New: branching timeline structure
   notes: string;
   equipment: string; // auto-calculated from drills
   createdAt: Date;

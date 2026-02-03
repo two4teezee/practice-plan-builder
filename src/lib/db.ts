@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Drill, PracticePlan } from './types';
+import type { Drill, PracticePlan, PracticePlanDrill, TimelineItem } from './types';
 
 const db = new Dexie('HockeyPracticePlanner') as Dexie & {
   drills: EntityTable<Drill, 'id'>;
@@ -15,6 +15,52 @@ db.version(2).stores({
   drills: '++id, name, category, skillFocus, createdAt',
   practicePlans: '++id, name, date, createdAt',
 });
+
+// Version 3: Add timeline field to practice plans for branching support
+db.version(3).stores({
+  drills: '++id, name, category, skillFocus, createdAt',
+  practicePlans: '++id, name, date, createdAt',
+}).upgrade(async tx => {
+  // Migrate existing practice plans to include timeline
+  const practicePlans = tx.table('practicePlans');
+  await practicePlans.toCollection().modify(plan => {
+    if (!plan.timeline && plan.drills) {
+      // Convert legacy drills array to timeline format
+      plan.timeline = migrateDrillsToTimeline(plan.drills);
+    }
+  });
+});
+
+// Migration helper: convert legacy PracticePlanDrill[] to TimelineItem[]
+function migrateDrillsToTimeline(drills: PracticePlanDrill[]): TimelineItem[] {
+  return drills
+    .sort((a, b) => a.order - b.order)
+    .map(drill => ({
+      type: 'drill' as const,
+      id: drill.id,
+      drillId: drill.drillId,
+      drill: drill.drill,
+      customDuration: drill.customDuration,
+      customNotes: drill.customNotes,
+    }));
+}
+
+// Ensure a practice plan has a timeline (for data loaded from DB)
+export function ensurePlanHasTimeline(plan: PracticePlan): PracticePlan {
+  if (!plan.timeline || plan.timeline.length === 0) {
+    if (plan.drills && plan.drills.length > 0) {
+      return {
+        ...plan,
+        timeline: migrateDrillsToTimeline(plan.drills),
+      };
+    }
+    return {
+      ...plan,
+      timeline: [],
+    };
+  }
+  return plan;
+}
 
 export { db };
 

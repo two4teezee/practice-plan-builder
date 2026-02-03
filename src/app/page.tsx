@@ -3,35 +3,49 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
 import { db } from '@/lib/db';
-import { 
+import type { 
   PracticePlan, 
   PracticePlanDrill, 
   Drill,
-  PRACTICE_DURATIONS, 
   PracticeDuration,
-  getEffectiveDuration,
-  parseDurationToSeconds,
+  TimelineItem,
+} from '@/lib/types';
+import {
+  PRACTICE_DURATIONS, 
   parsePracticeDurationToSeconds,
   parseEquipmentString,
   equipmentSelectionsToString,
-  EQUIPMENT_OPTIONS
+  EQUIPMENT_OPTIONS,
+  getTimelineDuration,
+  flattenTimelineDrills,
+  convertDrillsToTimeline,
+  convertTimelineToDrills,
+  createDrillItem,
+  createParallelSplit,
+  addGroupToSplit,
+  removeGroupFromSplit,
 } from '@/lib/types';
-import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
-import { Textarea } from '@/components/ui/Textarea';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
 import { DrillsList } from '@/components/practice/DrillsList';
 import { DrillPicker } from '@/components/practice/DrillPicker';
+import { PracticeTimeline } from '@/components/practice/PracticeTimeline';
 import { 
   ClipboardList, 
   Save, 
   Plus, 
   FileText,
   Clock,
-  Trash2
+  Trash2,
+  GitBranch,
+  FolderOpen,
+  Calendar,
+  MapPin
 } from 'lucide-react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { ensurePlanHasTimeline } from '@/lib/db';
+import { LAYOUT_CONFIG, LAYOUT_STYLES, px } from '@/lib/layoutConfig';
 
 const DRAFT_STORAGE_KEY = 'practice-plan-draft';
 
@@ -45,6 +59,7 @@ interface DraftData {
     notes: string;
   };
   drills: PracticePlanDrill[];
+  timeline?: TimelineItem[]; // New: timeline structure (optional for backward compat)
 }
 
 const getDefaultFormData = () => ({
@@ -58,12 +73,28 @@ const getDefaultFormData = () => ({
 
 export default function CreatePracticePlanPage() {
   const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   
   const [formData, setFormData] = useState(getDefaultFormData);
-  const [drills, setDrills] = useState<PracticePlanDrill[]>([]);
+  const [timeline, setTimeline] = useState<TimelineItem[]>([]);
+  
+  // For drill picker context - which group to add drills to (null = main timeline)
+  const [activeGroupPath, setActiveGroupPath] = useState<string[] | null>(null);
+
+  // Load saved practice plans for the load modal
+  const savedPlans = useLiveQuery(
+    async () => {
+      const plans = await db.practicePlans.orderBy('createdAt').reverse().toArray();
+      return plans.map(plan => ensurePlanHasTimeline(plan));
+    },
+    []
+  );
+  
+  // Compute legacy drills array from timeline for backward compatibility
+  const drills = useMemo(() => convertTimelineToDrills(timeline), [timeline]);
 
   // Load draft from localStorage on mount, or add default drill if no draft
   useEffect(() => {
@@ -74,18 +105,18 @@ export default function CreatePracticePlanPage() {
           // Load existing draft
           const draft: DraftData = JSON.parse(saved);
           setFormData(draft.formData);
-          setDrills(draft.drills);
+          // Prefer timeline if available, otherwise convert legacy drills
+          if (draft.timeline && draft.timeline.length > 0) {
+            setTimeline(draft.timeline);
+          } else if (draft.drills && draft.drills.length > 0) {
+            setTimeline(convertDrillsToTimeline(draft.drills));
+          }
         } else {
           // No draft - add the default "Setup Ice and Warm Ups" drill
           const setupDrill = await db.drills.where('name').equals('Setup Ice and Warm Ups').first();
           if (setupDrill && setupDrill.id) {
-            const defaultDrill: PracticePlanDrill = {
-              id: `drill-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              drillId: setupDrill.id,
-              drill: setupDrill,
-              order: 1,
-            };
-            setDrills([defaultDrill]);
+            const defaultDrillItem = createDrillItem(setupDrill);
+            setTimeline([defaultDrillItem]);
           }
         }
       } catch (error) {
@@ -97,17 +128,17 @@ export default function CreatePracticePlanPage() {
     initializePlan();
   }, []);
 
-  // Save draft to localStorage whenever formData or drills change
+  // Save draft to localStorage whenever formData or timeline change
   useEffect(() => {
     if (!isLoaded) return; // Don't save until initial load is complete
     
     try {
-      const draft: DraftData = { formData, drills };
+      const draft: DraftData = { formData, drills, timeline };
       localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
     } catch (error) {
       console.error('Failed to save draft:', error);
     }
-  }, [formData, drills, isLoaded]);
+  }, [formData, drills, timeline, isLoaded]);
 
   // Clear the draft from localStorage
   const clearDraft = useCallback(() => {
@@ -120,11 +151,8 @@ export default function CreatePracticePlanPage() {
 
   // Calculate total drill time (using custom durations if set)
   const totalDrillTime = useMemo(() => {
-    return drills.reduce((acc, d) => {
-      const duration = getEffectiveDuration(d);
-      return acc + parseDurationToSeconds(duration);
-    }, 0);
-  }, [drills]);
+    return getTimelineDuration(timeline);
+  }, [timeline]);
 
   // Calculate available practice time based on selected duration
   const availablePracticeTime = useMemo(() => {
@@ -145,9 +173,10 @@ export default function CreatePracticePlanPage() {
   // Auto-calculate equipment (take max quantity for each type across all drills)
   const equipment = useMemo(() => {
     const maxQuantities = new Map<string, number>();
+    const allDrills = flattenTimelineDrills(timeline);
     
     // Go through each drill's equipment
-    for (const d of drills) {
+    for (const d of allDrills) {
       if (!d.drill.equipment) continue;
       
       const selections = parseEquipmentString(d.drill.equipment);
@@ -169,36 +198,176 @@ export default function CreatePracticePlanPage() {
       }));
     
     return equipmentSelectionsToString(consolidatedSelections);
-  }, [drills]);
+  }, [timeline]);
+
+  // Helper to update an item deep in the timeline tree
+  const updateTimelineItem = useCallback((
+    items: TimelineItem[],
+    itemId: string,
+    updater: (item: TimelineItem) => TimelineItem | null
+  ): TimelineItem[] => {
+    return items.flatMap(item => {
+      if (item.id === itemId) {
+        const updated = updater(item);
+        return updated ? [updated] : [];
+      }
+      if (item.type === 'parallel') {
+        return [{
+          ...item,
+          groups: item.groups.map(group => ({
+            ...group,
+            items: updateTimelineItem(group.items, itemId, updater)
+          }))
+        }];
+      }
+      return [item];
+    });
+  }, []);
+
+  // Helper to add item to a specific group in the timeline
+  const addItemToTimeline = useCallback((
+    items: TimelineItem[],
+    newItem: TimelineItem,
+    groupPath: string[] | null
+  ): TimelineItem[] => {
+    if (!groupPath || groupPath.length === 0) {
+      // Add to main timeline
+      return [...items, newItem];
+    }
+    
+    const [parallelId, groupId, ...restPath] = groupPath;
+    return items.map(item => {
+      if (item.id === parallelId && item.type === 'parallel') {
+        return {
+          ...item,
+          groups: item.groups.map(group => {
+            if (group.id === groupId) {
+              return {
+                ...group,
+                items: addItemToTimeline(group.items, newItem, restPath.length > 0 ? restPath : null)
+              };
+            }
+            return group;
+          })
+        };
+      }
+      return item;
+    });
+  }, []);
 
   const handleAddDrill = (drill: Drill) => {
     if (!drill.id) return;
-    
-    const newDrill: PracticePlanDrill = {
-      id: `drill-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      drillId: drill.id,
-      drill: drill,
-      order: drills.length + 1,
-    };
-    
-    setDrills([...drills, newDrill]);
+    const newDrillItem = createDrillItem(drill);
+    setTimeline(prev => addItemToTimeline(prev, newDrillItem, activeGroupPath));
   };
 
   const handleRemoveDrill = (id: string) => {
-    const updated = drills
-      .filter((d) => d.id !== id)
-      .map((d, i) => ({ ...d, order: i + 1 }));
-    setDrills(updated);
+    setTimeline(prev => updateTimelineItem(prev, id, () => null));
   };
 
-  const handleReorderDrills = (reordered: PracticePlanDrill[]) => {
-    setDrills(reordered);
+  const handleReorderTimeline = (reorderedItems: TimelineItem[]) => {
+    setTimeline(reorderedItems);
+  };
+
+  // Reorder items within a specific group
+  const handleReorderGroup = (parallelId: string, groupId: string, reorderedItems: TimelineItem[]) => {
+    setTimeline(prev => prev.map(item => {
+      if (item.id === parallelId && item.type === 'parallel') {
+        return {
+          ...item,
+          groups: item.groups.map(group => {
+            if (group.id === groupId) {
+              return { ...group, items: reorderedItems };
+            }
+            return group;
+          })
+        };
+      }
+      return item;
+    }));
   };
 
   const handleUpdateDuration = (id: string, duration: string) => {
-    setDrills(drills.map((d) => 
-      d.id === id ? { ...d, customDuration: duration } : d
-    ));
+    setTimeline(prev => updateTimelineItem(prev, id, item => {
+      if (item.type === 'drill') {
+        return { ...item, customDuration: duration };
+      }
+      return item;
+    }));
+  };
+
+  // Add a parallel split to the main timeline
+  const handleAddParallelSplit = () => {
+    const newSplit = createParallelSplit(2);
+    setTimeline(prev => [...prev, newSplit]);
+  };
+
+  // Add a parallel split inside a group (nested)
+  const handleAddNestedSplit = (parallelId: string, groupId: string) => {
+    const newSplit = createParallelSplit(2);
+    setTimeline(prev => prev.map(item => {
+      if (item.id === parallelId && item.type === 'parallel') {
+        return {
+          ...item,
+          groups: item.groups.map(group => {
+            if (group.id === groupId) {
+              return { ...group, items: [...group.items, newSplit] };
+            }
+            return group;
+          })
+        };
+      }
+      return item;
+    }));
+  };
+
+  // Add a group to an existing parallel split
+  const handleAddGroup = (parallelId: string) => {
+    setTimeline(prev => updateTimelineItem(prev, parallelId, item => {
+      if (item.type === 'parallel' && item.groups.length < 4) {
+        return addGroupToSplit(item);
+      }
+      return item;
+    }));
+  };
+
+  // Remove a group from a parallel split
+  const handleRemoveGroup = (parallelId: string, groupId: string) => {
+    setTimeline(prev => updateTimelineItem(prev, parallelId, item => {
+      if (item.type === 'parallel' && item.groups.length > 2) {
+        return removeGroupFromSplit(item, groupId);
+      }
+      return item;
+    }));
+  };
+
+  // Remove an entire parallel split
+  const handleRemoveParallelSplit = (id: string) => {
+    setTimeline(prev => updateTimelineItem(prev, id, () => null));
+  };
+
+  // Update group name
+  const handleUpdateGroupName = (parallelId: string, groupId: string, name: string) => {
+    setTimeline(prev => prev.map(item => {
+      if (item.id === parallelId && item.type === 'parallel') {
+        return {
+          ...item,
+          groups: item.groups.map(group => {
+            if (group.id === groupId) {
+              return { ...group, name };
+            }
+            return group;
+          })
+        };
+      }
+      return item;
+    }));
+  };
+
+  // Open drill picker for a specific group
+  const handleOpenPickerForGroup = (groupPath: string[] | null) => {
+    setActiveGroupPath(groupPath);
+    setIsPickerOpen(true);
   };
 
   // Helper to add the default "Setup Ice and Warm Ups" drill
@@ -206,24 +375,19 @@ export default function CreatePracticePlanPage() {
     try {
       const setupDrill = await db.drills.where('name').equals('Setup Ice and Warm Ups').first();
       if (setupDrill && setupDrill.id) {
-        const defaultDrill: PracticePlanDrill = {
-          id: `drill-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          drillId: setupDrill.id,
-          drill: setupDrill,
-          order: 1,
-        };
-        setDrills([defaultDrill]);
+        const defaultDrillItem = createDrillItem(setupDrill);
+        setTimeline([defaultDrillItem]);
       } else {
-        setDrills([]);
+        setTimeline([]);
       }
     } catch (error) {
       console.error('Failed to add default drill:', error);
-      setDrills([]);
+      setTimeline([]);
     }
   }, []);
 
   const handleSave = async () => {
-    if (drills.length === 0) {
+    if (timeline.length === 0) {
       alert('Please add at least one drill to the practice plan.');
       return;
     }
@@ -237,7 +401,8 @@ export default function CreatePracticePlanPage() {
         date: new Date(formData.date),
         duration: formData.duration,
         location: formData.location,
-        drills: drills,
+        drills: drills, // Legacy format for backward compatibility
+        timeline: timeline, // New branching timeline
         notes: formData.notes,
         equipment: equipment,
         createdAt: now,
@@ -273,166 +438,282 @@ export default function CreatePracticePlanPage() {
     }
   };
 
+  const handleLoadPlan = (plan: PracticePlan) => {
+    // Load the plan data into the form
+    setFormData({
+      name: plan.name,
+      description: plan.description || '',
+      date: format(new Date(plan.date), 'yyyy-MM-dd'),
+      duration: plan.duration,
+      location: plan.location,
+      notes: plan.notes || '',
+    });
+    
+    // Load the timeline (prefer timeline, fall back to converting drills)
+    if (plan.timeline && plan.timeline.length > 0) {
+      setTimeline(plan.timeline);
+    } else if (plan.drills && plan.drills.length > 0) {
+      setTimeline(convertDrillsToTimeline(plan.drills));
+    } else {
+      setTimeline([]);
+    }
+    
+    setIsLoadModalOpen(false);
+  };
+
   const durationOptions = PRACTICE_DURATIONS.map((d) => ({ value: d, label: d }));
 
-  const addedDrillIds = drills.map((d) => d.drillId);
+  // Get all drill IDs already in the timeline (including those in parallel groups)
+  const addedDrillIds = useMemo(() => {
+    return flattenTimelineDrills(timeline).map(d => d.drillId);
+  }, [timeline]);
+
+  /*
+   * LAYOUT VALUES - Edit src/lib/layoutConfig.ts to adjust these
+   * The LAYOUT_STYLES object provides pre-computed CSS for inline styles
+   */
+  const L = LAYOUT_CONFIG;
+  const S = LAYOUT_STYLES;
 
   return (
-    <div className="h-[calc(100vh-6rem)] flex flex-col max-w-7xl mx-auto">
-      {/* Header - Compact */}
-      <div className="flex items-center justify-between mb-3 flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <ClipboardList className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-          <h1 className="text-xl font-bold text-gray-900 dark:text-white">
+    <div 
+      className="mx-auto h-[calc(100vh-3rem)] lg:h-[calc(100vh-2.5rem)] flex flex-col"
+      style={{ maxWidth: px(L.maxWidth) }}
+    >
+      {/* Header */}
+      <div className="flex-shrink-0" style={S.pageHeader}>
+        <div className="flex items-center gap-2">
+          <ClipboardList 
+            className="text-primary-600 dark:text-primary-400" 
+            style={S.headerIcon}
+          />
+          <h1 
+            className="font-bold text-gray-900 dark:text-white"
+            style={S.headerTitle}
+          >
             Create Practice Plan
           </h1>
         </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleClear}
-          >
-            <Trash2 className="w-4 h-4" />
-            Clear
-          </Button>
-          <Button
-            size="sm"
-            onClick={handleSave}
-            disabled={isSaving}
-          >
-            <Save className="w-4 h-4" />
-            {isSaving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save Plan'}
-          </Button>
-        </div>
       </div>
 
-      {/* Main Content - Fills available space */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 flex-1 min-h-0">
-        {/* Left Column - Practice Details */}
-        <div className="xl:col-span-1 flex flex-col min-h-0">
-          <Card className="p-4 flex-1 overflow-y-auto">
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
-              <FileText className="w-4 h-4" />
-              Practice Details
+      {/* Main Content - 5-column grid: 1 for details, 4 for drills */}
+      <div 
+        className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-5"
+        style={S.columnGap}
+      >
+        {/* Left Column - Practice Details (narrower: 1/5 = 20%) */}
+        <div className="xl:col-span-1 flex flex-col gap-2 min-h-0">
+          <Card className="flex-1 overflow-y-auto" style={S.detailsCard}>
+            <h2 
+              className="font-semibold text-gray-900 dark:text-white flex items-center gap-1.5"
+              style={S.detailsHeader}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Details
             </h2>
             
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <Input
+            <div className="flex flex-col" style={S.detailsFieldSpacing}>
+              <div>
+                <label 
+                  htmlFor="name" 
+                  className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
+                  style={S.detailsLabel}
+                >
+                  Practice Name
+                </label>
+                <input
                   id="name"
-                  label="Practice Name"
+                  type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="Enter practice name"
-                  className="text-sm"
-                />
-                <Input
-                  id="date"
-                  label="Date"
-                  type="date"
-                  value={formData.date}
-                  onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                  className="text-sm"
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  style={S.detailsInput}
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <Select
-                  id="duration"
-                  label="Duration"
-                  value={formData.duration}
-                  onChange={(e) => setFormData({ ...formData, duration: e.target.value as PracticeDuration })}
-                  options={durationOptions}
-                />
-                <Input
+              <div className="grid grid-cols-2" style={S.formRowGap}>
+                <div>
+                  <label 
+                    htmlFor="date" 
+                    className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
+                    style={S.detailsLabel}
+                  >
+                    Date
+                  </label>
+                  <input
+                    id="date"
+                    type="date"
+                    value={formData.date}
+                    onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    style={S.detailsInput}
+                  />
+                </div>
+
+                <div>
+                  <label 
+                    htmlFor="duration" 
+                    className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
+                    style={S.detailsLabel}
+                  >
+                    Duration
+                  </label>
+                  <select
+                    id="duration"
+                    value={formData.duration}
+                    onChange={(e) => setFormData({ ...formData, duration: e.target.value as PracticeDuration })}
+                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    style={S.detailsInput}
+                  >
+                    {durationOptions.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label 
+                  htmlFor="location" 
+                  className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
+                  style={S.detailsLabel}
+                >
+                  Location
+                </label>
+                <input
                   id="location"
-                  label="Location"
+                  type="text"
                   value={formData.location}
                   onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                  placeholder="Location"
-                  className="text-sm"
+                  placeholder="Enter location"
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  style={S.detailsInput}
                 />
               </div>
 
-              <Textarea
-                id="description"
-                label="Description"
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="What's the focus of this practice?"
-                rows={2}
-              />
-
-              <Textarea
-                id="notes"
-                label="Notes"
-                value={formData.notes}
-                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                placeholder="Additional notes..."
-                rows={2}
-              />
+              <div>
+                <label 
+                  htmlFor="notes" 
+                  className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
+                  style={S.detailsLabel}
+                >
+                  Notes
+                </label>
+                <textarea
+                  id="notes"
+                  value={formData.notes}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  placeholder="Additional notes..."
+                  rows={2}
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 resize-none"
+                  style={S.detailsInput}
+                />
+              </div>
 
               {/* Equipment Summary */}
               {equipment && (
                 <div className="p-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                  <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-0.5">
+                  <p className="text-[10px] font-medium text-gray-700 dark:text-gray-300 mb-0.5">
                     Equipment Needed
                   </p>
-                  <p className="text-xs text-gray-600 dark:text-gray-400">
+                  <p className="text-[10px] text-gray-600 dark:text-gray-400">
                     {equipment}
                   </p>
                 </div>
               )}
             </div>
           </Card>
+
+          {/* Actions */}
+          <div className="flex-shrink-0 flex" style={S.actionButtonGap}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1 text-xs px-2"
+              onClick={handleClear}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Clear
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1 text-xs px-2"
+              onClick={() => setIsLoadModalOpen(true)}
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              Load
+            </Button>
+            <Button
+              size="sm"
+              className="flex-1 text-xs px-2"
+              onClick={handleSave}
+              disabled={isSaving}
+            >
+              <Save className="w-3.5 h-3.5" />
+              {isSaving ? '...' : saveSuccess ? 'Saved!' : 'Save'}
+            </Button>
+          </div>
         </div>
 
-        {/* Right Column - Drills */}
-        <div className="xl:col-span-2 flex flex-col min-h-0">
-          <Card className="p-4 flex-1 flex flex-col min-h-0">
-            <div className="flex items-center justify-between mb-3 flex-shrink-0">
+        {/* Right Column - Drills (wider: 4/5 = 80%) */}
+        <div className="xl:col-span-4 flex flex-col min-h-0">
+          <Card className="flex-1 flex flex-col min-h-0" style={S.drillsCard}>
+            <div className="flex-shrink-0 flex items-center justify-between" style={S.drillsHeader}>
               <div>
                 <h2 className="text-sm font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                   Practice Drills
                   <span className="text-xs font-normal text-gray-500 dark:text-gray-400">
-                    ({drills.length} drills)
+                    ({drills.length})
                   </span>
                 </h2>
                 <div className="flex items-center gap-2 text-xs mt-0.5">
                   <div className="flex items-center gap-1 text-gray-500 dark:text-gray-400">
-                    <Clock className="w-3 h-3" />
-                    <span>Used: {formatTime(totalDrillTime)}</span>
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>{formatTime(totalDrillTime)}</span>
                   </div>
-                  <span className="text-gray-300 dark:text-gray-600">|</span>
-                  <div className="flex items-center gap-1 text-gray-500 dark:text-gray-400">
-                    <span>Available: {formatTime(availablePracticeTime)}</span>
-                  </div>
-                  <span className="text-gray-300 dark:text-gray-600">|</span>
-                  <div className={`flex items-center gap-1 font-medium ${
+                  <span className="text-gray-300 dark:text-gray-600">/</span>
+                  <span className="text-gray-500 dark:text-gray-400">{formatTime(availablePracticeTime)}</span>
+                  <span className={`font-medium ${
                     remainingTime < 0 
                       ? 'text-red-600 dark:text-red-400' 
                       : remainingTime < 300 
                         ? 'text-amber-600 dark:text-amber-400'
                         : 'text-green-600 dark:text-green-400'
                   }`}>
-                    <span>Remaining: {formatTime(remainingTime)}</span>
-                  </div>
+                    ({remainingTime >= 0 ? '+' : ''}{formatTime(remainingTime)} left)
+                  </span>
                 </div>
               </div>
-              <Button size="sm" onClick={() => setIsPickerOpen(true)}>
-                <Plus className="w-4 h-4" />
-                Add Drill
-              </Button>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={handleAddParallelSplit}>
+                  <GitBranch className="w-4 h-4" />
+                  Split Groups
+                </Button>
+                <Button size="sm" onClick={() => handleOpenPickerForGroup(null)}>
+                  <Plus className="w-4 h-4" />
+                  Add Drill
+                </Button>
+              </div>
             </div>
 
+            {/* Scrollable drills list */}
             <div className="flex-1 overflow-y-auto min-h-0">
               <DrillsList
-                drills={drills}
-                onReorder={handleReorderDrills}
+                timeline={timeline}
+                onReorder={handleReorderTimeline}
+                onReorderGroup={handleReorderGroup}
                 onRemove={handleRemoveDrill}
                 onUpdateDuration={handleUpdateDuration}
                 onViewDetails={() => {}}
+                onAddDrillToGroup={handleOpenPickerForGroup}
+                onAddParallelSplit={handleAddParallelSplit}
+                onAddNestedSplit={handleAddNestedSplit}
+                onAddGroup={handleAddGroup}
+                onRemoveGroup={handleRemoveGroup}
+                onRemoveParallelSplit={handleRemoveParallelSplit}
+                onUpdateGroupName={handleUpdateGroupName}
               />
             </div>
           </Card>
@@ -440,15 +721,9 @@ export default function CreatePracticePlanPage() {
       </div>
 
       {/* Timeline View - Fixed at bottom */}
-      {drills.length > 0 && (
-        <div className="flex-shrink-0 mt-3">
-          <TimelineView 
-            drills={drills} 
-            totalDuration={availablePracticeTime}
-            formatTime={formatTime}
-          />
-        </div>
-      )}
+      <div className="flex-shrink-0" style={S.timeline}>
+        <PracticeTimeline timeline={timeline} practiceDuration={formData.duration} />
+      </div>
 
       {/* Drill Picker Modal */}
       <Modal
@@ -459,141 +734,65 @@ export default function CreatePracticePlanPage() {
       >
         <DrillPicker onAdd={handleAddDrill} addedDrillIds={addedDrillIds} />
       </Modal>
-    </div>
-  );
-}
 
-// Timeline View Component
-interface TimelineViewProps {
-  drills: PracticePlanDrill[];
-  totalDuration: number;
-  formatTime: (seconds: number) => string;
-}
-
-function TimelineView({ drills, totalDuration, formatTime }: TimelineViewProps) {
-  const categoryColors: Record<string, { bg: string; text: string; border: string }> = {
-    Admin: { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-700 dark:text-slate-300', border: 'border-slate-300 dark:border-slate-600' },
-    Skating: { bg: 'bg-blue-100 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-300', border: 'border-blue-300 dark:border-blue-700' },
-    Shooting: { bg: 'bg-red-100 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-300', border: 'border-red-300 dark:border-red-700' },
-    Passing: { bg: 'bg-green-100 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-300', border: 'border-green-300 dark:border-green-700' },
-    Defensive: { bg: 'bg-purple-100 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-300', border: 'border-purple-300 dark:border-purple-700' },
-    Offensive: { bg: 'bg-orange-100 dark:bg-orange-900/30', text: 'text-orange-700 dark:text-orange-300', border: 'border-orange-300 dark:border-orange-700' },
-    Other: { bg: 'bg-gray-100 dark:bg-gray-800', text: 'text-gray-700 dark:text-gray-300', border: 'border-gray-300 dark:border-gray-600' },
-  };
-
-  // Calculate the total drill time
-  const totalDrillTime = drills.reduce((acc, d) => {
-    const duration = getEffectiveDuration(d);
-    return acc + parseDurationToSeconds(duration);
-  }, 0);
-
-  // Use the larger of total duration or total drill time for the timeline width
-  const timelineWidth = Math.max(totalDuration, totalDrillTime);
-
-  // Calculate cumulative start times for each drill
-  let cumulativeTime = 0;
-  const drillsWithTiming = drills.map((drill) => {
-    const duration = parseDurationToSeconds(getEffectiveDuration(drill));
-    const startTime = cumulativeTime;
-    cumulativeTime += duration;
-    return {
-      ...drill,
-      startTime,
-      duration,
-    };
-  });
-
-  // Generate time markers (every 5 minutes)
-  const timeMarkers: number[] = [];
-  for (let t = 0; t <= timelineWidth; t += 300) {
-    timeMarkers.push(t);
-  }
-  // Always include the end time if it doesn't align with a marker
-  if (timelineWidth % 300 !== 0) {
-    timeMarkers.push(timelineWidth);
-  }
-
-  return (
-    <Card className="p-3">
-      <div className="flex items-center gap-2 mb-2">
-        <Clock className="w-3 h-3 text-gray-500" />
-        <h3 className="text-xs font-semibold text-gray-900 dark:text-white">
-          Practice Timeline
-        </h3>
-        {/* Inline Legend */}
-        <div className="flex flex-wrap gap-1.5 ml-auto">
-          {Array.from(new Set(drills.map(d => d.drill.category))).map((category) => {
-            const colors = categoryColors[category] || categoryColors.Other;
-            return (
-              <span 
-                key={category}
-                className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${colors.bg} ${colors.text}`}
-              >
-                {category}
-              </span>
-            );
-          })}
-        </div>
-      </div>
-      
-      <div className="relative">
-        {/* Time markers */}
-        <div className="relative h-4 text-[10px] text-gray-500 dark:text-gray-400">
-          {timeMarkers.map((t) => (
-            <span 
-              key={t} 
-              className="absolute transform -translate-x-1/2"
-              style={{ left: `${(t / timelineWidth) * 100}%` }}
-            >
-              {formatTime(t)}
-            </span>
-          ))}
-        </div>
-
-        {/* Timeline bar */}
-        <div className="relative h-8 bg-gray-100 dark:bg-gray-800 rounded-md overflow-hidden">
-          {/* Practice duration background */}
-          <div 
-            className="absolute inset-y-0 left-0 bg-gray-50 dark:bg-gray-700/50 border-r-2 border-dashed border-gray-300 dark:border-gray-600"
-            style={{ width: `${Math.min((totalDuration / timelineWidth) * 100, 100)}%` }}
-          />
-          
-          {/* Drill blocks */}
-          {drillsWithTiming.map((drill) => {
-            const leftPercent = (drill.startTime / timelineWidth) * 100;
-            const widthPercent = (drill.duration / timelineWidth) * 100;
-            const colors = categoryColors[drill.drill.category] || categoryColors.Other;
-            
-            return (
-              <div
-                key={drill.id}
-                className={`absolute inset-y-0.5 ${colors.bg} ${colors.border} border rounded flex items-center justify-center overflow-hidden transition-all duration-200 hover:scale-[1.02] hover:z-10`}
-                style={{
-                  left: `${leftPercent}%`,
-                  width: `${widthPercent}%`,
-                  minWidth: '2px',
-                }}
-                title={`${drill.drill.name} (${getEffectiveDuration(drill)})`}
-              >
-                <span className={`${colors.text} text-[10px] font-medium truncate px-0.5`}>
-                  {widthPercent > 10 ? drill.drill.name : ''}
-                </span>
-              </div>
-            );
-          })}
-
-          {/* Overflow indicator (if drills exceed practice duration) */}
-          {totalDrillTime > totalDuration && (
-            <div 
-              className="absolute inset-y-0 bg-red-100/50 dark:bg-red-900/20 border-l-2 border-red-400 dark:border-red-600"
-              style={{ 
-                left: `${(totalDuration / timelineWidth) * 100}%`,
-                width: `${((totalDrillTime - totalDuration) / timelineWidth) * 100}%`
-              }}
-            />
+      {/* Load Practice Plan Modal */}
+      <Modal
+        isOpen={isLoadModalOpen}
+        onClose={() => setIsLoadModalOpen(false)}
+        title="Load Practice Plan"
+        size="lg"
+      >
+        <div className="max-h-[60vh] overflow-y-auto">
+          {!savedPlans || savedPlans.length === 0 ? (
+            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+              <FolderOpen className="w-12 h-12 mx-auto mb-3 opacity-50" />
+              <p>No saved practice plans found.</p>
+              <p className="text-sm mt-1">Save a practice plan first to load it later.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {savedPlans.map((plan) => (
+                <button
+                  key={plan.id}
+                  type="button"
+                  onClick={() => handleLoadPlan(plan)}
+                  className="w-full text-left p-4 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-primary-500 dark:hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-medium text-gray-900 dark:text-white truncate">
+                        {plan.name}
+                      </h3>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        <span className="flex items-center gap-1">
+                          <Calendar className="w-3.5 h-3.5" />
+                          {format(new Date(plan.date), 'MMM d, yyyy')}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5" />
+                          {plan.duration}
+                        </span>
+                        {plan.location && (
+                          <span className="flex items-center gap-1">
+                            <MapPin className="w-3.5 h-3.5" />
+                            {plan.location}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                        {plan.timeline?.length || plan.drills?.length || 0} drills
+                        {plan.createdAt && (
+                          <> · Created {format(new Date(plan.createdAt), 'MMM d, yyyy')}</>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
           )}
         </div>
-      </div>
-    </Card>
+      </Modal>
+    </div>
   );
 }
