@@ -302,6 +302,15 @@ export default function CreatePracticePlanPage() {
     }));
   };
 
+  const handleUpdateVariations = (id: string, variations: string[]) => {
+    setTimeline(prev => updateTimelineItem(prev, id, item => {
+      if (item.type === 'drill') {
+        return { ...item, selectedVariations: variations };
+      }
+      return item;
+    }));
+  };
+
   // Add a parallel split to the main timeline
   const handleAddParallelSplit = () => {
     const newSplit = createParallelSplit(2);
@@ -779,6 +788,7 @@ export default function CreatePracticePlanPage() {
                 onReorderGroup={handleReorderGroup}
                 onRemove={handleRemoveDrill}
                 onUpdateDuration={handleUpdateDuration}
+                onUpdateVariations={handleUpdateVariations}
                 onViewDetails={() => {}}
                 onAddDrillToGroup={handleOpenPickerForGroup}
                 onAddParallelSplit={handleAddParallelSplit}

@@ -46,6 +46,20 @@ export interface DrillItem {
   drill: Drill;
   customDuration?: string;
   customNotes?: string;
+  selectedVariations?: string[]; // Selected variation names for this practice
+}
+
+// Parse variations string into array of variation names
+export function parseVariations(variations: string): string[] {
+  if (!variations || !variations.trim()) return [];
+  
+  // Split by common delimiters: newlines, semicolons, or numbered lists
+  const lines = variations
+    .split(/[\n;]|(?:\d+\.\s*)/)
+    .map(v => v.trim())
+    .filter(v => v.length > 0);
+  
+  return lines;
 }
 
 // A parallel split containing multiple concurrent groups
@@ -190,6 +204,7 @@ export function createDrillItem(drill: Drill): DrillItem {
     id: `drill-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     drillId: drill.id!,
     drill,
+    selectedVariations: [],
   };
 }
 

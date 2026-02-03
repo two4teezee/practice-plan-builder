@@ -52,6 +52,13 @@ function renderTimelineItemsToPDF(
         y += cpLines.length * 5;
       }
 
+      // Selected variations (after coaching points)
+      if (item.selectedVariations && item.selectedVariations.length > 0) {
+        const varLines = doc.splitTextToSize(`Variations: ${item.selectedVariations.join(', ')}`, pageWidth - 50 - indent);
+        doc.text(varLines, 25 + indent, y);
+        y += varLines.length * 5;
+      }
+
       y += 6;
     } else {
       // Parallel split
@@ -244,6 +251,16 @@ function generateTimelineItemParagraphs(
           children: [new TextRun({ text: 'Coaching Points: ', bold: true }), new TextRun(item.drill.coachingPoints)],
         }));
       }
+      // Selected variations (after coaching points)
+      if (item.selectedVariations && item.selectedVariations.length > 0) {
+        paragraphs.push(new Paragraph({
+          indent: { left: (indent + 1) * 720 },
+          children: [
+            new TextRun({ text: 'Variations: ', bold: true }), 
+            new TextRun(item.selectedVariations.join(', '))
+          ],
+        }));
+      }
       paragraphs.push(new Paragraph(''));
     } else {
       // Parallel split
@@ -409,12 +426,14 @@ function generateTimelineItemsHtml(
   for (const item of items) {
     if (item.type === 'drill') {
       const duration = item.customDuration || item.drill.duration;
+      const hasVariations = item.selectedVariations && item.selectedVariations.length > 0;
       html += `
         <div class="drill">
           <h3>${drillIndex.value}. ${item.drill.name} <span class="time">(${duration})</span></h3>
           ${item.drill.objective ? `<p><strong>Objective:</strong> ${item.drill.objective}</p>` : ''}
           ${item.drill.execution ? `<p><strong>Execution:</strong> ${item.drill.execution}</p>` : ''}
           ${item.drill.coachingPoints ? `<p><strong>Coaching Points:</strong> ${item.drill.coachingPoints}</p>` : ''}
+          ${hasVariations ? `<p><strong>Variations:</strong> ${item.selectedVariations!.join(', ')}</p>` : ''}
         </div>
       `;
       drillIndex.value++;

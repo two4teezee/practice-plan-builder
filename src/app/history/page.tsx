@@ -33,22 +33,33 @@ import { LAYOUT_STYLES } from '@/lib/layoutConfig';
 // Component to render a single drill item
 function DrillItemView({ item, index }: { item: DrillItem; index?: number }) {
   const duration = item.customDuration || item.drill.duration;
+  const hasVariations = item.selectedVariations && item.selectedVariations.length > 0;
   return (
-    <div className="flex items-center gap-3 p-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
-      {index !== undefined && (
-        <span className="w-6 h-6 flex items-center justify-center bg-primary-100 dark:bg-primary-900/30 rounded-full text-xs font-bold text-primary-700 dark:text-primary-300">
-          {index + 1}
+    <div className="p-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
+      <div className="flex items-center gap-3">
+        {index !== undefined && (
+          <span className="w-6 h-6 flex items-center justify-center bg-primary-100 dark:bg-primary-900/30 rounded-full text-xs font-bold text-primary-700 dark:text-primary-300">
+            {index + 1}
+          </span>
+        )}
+        <span className="font-medium text-gray-900 dark:text-white text-sm flex-1">
+          {item.drill.name}
         </span>
+        <span className="text-xs text-gray-500 dark:text-gray-400">
+          {duration}
+        </span>
+        <span className="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+          {item.drill.category}
+        </span>
+      </div>
+      {hasVariations && (
+        <div className="mt-1.5 ml-9 flex items-center gap-1.5">
+          <span className="text-[10px] font-medium text-gray-700 dark:text-gray-300">Variations:</span>
+          <span className="text-[10px] text-gray-600 dark:text-gray-400">
+            {item.selectedVariations!.join(', ')}
+          </span>
+        </div>
       )}
-      <span className="font-medium text-gray-900 dark:text-white text-sm flex-1">
-        {item.drill.name}
-      </span>
-      <span className="text-xs text-gray-500 dark:text-gray-400">
-        {duration}
-      </span>
-      <span className="text-xs px-2 py-0.5 rounded bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
-        {item.drill.category}
-      </span>
     </div>
   );
 }
@@ -103,14 +114,22 @@ function TimelineItemView({ item, index, compact = false }: { item: TimelineItem
   if (item.type === 'drill') {
     if (compact) {
       const duration = item.customDuration || item.drill.duration;
+      const hasVariations = item.selectedVariations && item.selectedVariations.length > 0;
       return (
-        <div className="flex items-center gap-2 p-1.5 bg-gray-50 dark:bg-gray-700 rounded text-xs">
-          <span className="font-medium text-gray-900 dark:text-white truncate flex-1">
-            {item.drill.name}
-          </span>
-          <span className="text-gray-500 dark:text-gray-400 flex-shrink-0">
-            {duration}
-          </span>
+        <div className="p-1.5 bg-gray-50 dark:bg-gray-700 rounded text-xs">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-gray-900 dark:text-white truncate flex-1">
+              {item.drill.name}
+            </span>
+            <span className="text-gray-500 dark:text-gray-400 flex-shrink-0">
+              {duration}
+            </span>
+          </div>
+          {hasVariations && (
+            <div className="mt-1 text-[10px] text-gray-600 dark:text-gray-400 truncate">
+              Vars: {item.selectedVariations!.join(', ')}
+            </div>
+          )}
         </div>
       );
     }
@@ -122,6 +141,7 @@ function TimelineItemView({ item, index, compact = false }: { item: TimelineItem
 // Detailed drill view for modal
 function DrillItemModalView({ item, index }: { item: DrillItem; index: number }) {
   const duration = item.customDuration || item.drill.duration;
+  const hasVariations = item.selectedVariations && item.selectedVariations.length > 0;
   return (
     <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">
       <div className="flex items-start gap-3">
@@ -147,8 +167,13 @@ function DrillItemModalView({ item, index }: { item: DrillItem; index: number })
             </p>
           )}
           {item.drill.coachingPoints && (
-            <p className="text-sm text-gray-600 dark:text-gray-400">
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
               <strong>Coaching Points:</strong> {item.drill.coachingPoints}
+            </p>
+          )}
+          {hasVariations && (
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              <strong>Variations:</strong> {item.selectedVariations!.join(', ')}
             </p>
           )}
         </div>
@@ -207,6 +232,7 @@ function TimelineItemModalView({ item, index, nested = false }: { item: Timeline
   if (item.type === 'drill') {
     if (nested) {
       const duration = item.customDuration || item.drill.duration;
+      const hasVariations = item.selectedVariations && item.selectedVariations.length > 0;
       return (
         <div className="p-2 bg-gray-50 dark:bg-gray-700 rounded-lg">
           <div className="flex items-center gap-2 mb-1">
@@ -216,6 +242,11 @@ function TimelineItemModalView({ item, index, nested = false }: { item: Timeline
           {item.drill.objective && (
             <p className="text-xs text-gray-600 dark:text-gray-400">
               {item.drill.objective}
+            </p>
+          )}
+          {hasVariations && (
+            <p className="text-xs text-gray-600 dark:text-gray-400">
+              <strong>Variations:</strong> {item.selectedVariations!.join(', ')}
             </p>
           )}
         </div>

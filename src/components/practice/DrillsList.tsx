@@ -25,6 +25,7 @@ interface DrillsListProps {
   onReorderGroup: (parallelId: string, groupId: string, items: TimelineItem[]) => void;
   onRemove: (id: string) => void;
   onUpdateDuration: (id: string, duration: string) => void;
+  onUpdateVariations: (id: string, variations: string[]) => void;
   onViewDetails: (item: DrillItem) => void;
   onAddDrillToGroup: (groupPath: string[] | null) => void;
   onAddParallelSplit: () => void;
@@ -40,7 +41,8 @@ export function DrillsList({
   onReorder, 
   onReorderGroup,
   onRemove, 
-  onUpdateDuration, 
+  onUpdateDuration,
+  onUpdateVariations,
   onViewDetails,
   onAddDrillToGroup,
   onAddParallelSplit,
@@ -103,6 +105,7 @@ export function DrillsList({
               index={index}
               onRemove={onRemove}
               onUpdateDuration={onUpdateDuration}
+              onUpdateVariations={onUpdateVariations}
               onViewDetails={onViewDetails}
               onReorderGroup={onReorderGroup}
               onAddDrillToGroup={onAddDrillToGroup}

@@ -3,10 +3,10 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { TimelineItem, DrillItem } from '@/lib/types';
-import { DRILL_DURATIONS } from '@/lib/types';
-import { GripVertical, X, ChevronDown, ChevronUp, Clock } from 'lucide-react';
+import { DRILL_DURATIONS, parseVariations } from '@/lib/types';
+import { GripVertical, X, ChevronDown, ChevronUp, Clock, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { ParallelGroupEditor } from './ParallelGroupEditor';
 
 interface SortableTimelineItemProps {
@@ -14,6 +14,7 @@ interface SortableTimelineItemProps {
   index: number;
   onRemove: (id: string) => void;
   onUpdateDuration: (id: string, duration: string) => void;
+  onUpdateVariations: (id: string, variations: string[]) => void;
   onViewDetails: (item: DrillItem) => void;
   onReorderGroup: (parallelId: string, groupId: string, items: TimelineItem[]) => void;
   onAddDrillToGroup: (groupPath: string[]) => void;
@@ -27,11 +28,113 @@ interface SortableTimelineItemProps {
   compact?: boolean;
 }
 
+// Variations dropdown component
+function VariationsDropdown({
+  variations,
+  selectedVariations,
+  onUpdate,
+  compact = false,
+}: {
+  variations: string[];
+  selectedVariations: string[];
+  onUpdate: (selected: string[]) => void;
+  compact?: boolean;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const toggleVariation = (variation: string) => {
+    if (selectedVariations.includes(variation)) {
+      onUpdate(selectedVariations.filter(v => v !== variation));
+    } else {
+      onUpdate([...selectedVariations, variation]);
+    }
+  };
+
+  const selectedCount = selectedVariations.length;
+  const hasSelections = selectedCount > 0;
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className={`
+          flex items-center gap-1 rounded-lg border cursor-pointer
+          bg-white dark:bg-gray-700 
+          border-gray-200 dark:border-gray-600
+          text-gray-900 dark:text-white
+          hover:bg-gray-50 dark:hover:bg-gray-600
+          focus:ring-2 focus:ring-primary-500 focus:border-primary-500
+          ${compact ? 'px-1.5 py-0.5 text-xs' : 'px-2 py-1 text-sm'}
+          ${hasSelections ? 'ring-2 ring-primary-500/50' : ''}
+        `}
+      >
+        <Layers className={compact ? 'w-3 h-3' : 'w-4 h-4'} />
+        <span className="whitespace-nowrap">
+          {hasSelections ? `${selectedCount} var${selectedCount > 1 ? 's' : ''}` : 'Variations'}
+        </span>
+        <ChevronDown className={`${compact ? 'w-3 h-3' : 'w-4 h-4'} ${isOpen ? 'rotate-180' : ''} transition-transform`} />
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-50 mt-1 right-0 min-w-[200px] max-w-[300px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg">
+          <div className="p-2 border-b border-gray-100 dark:border-gray-700">
+            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+              Select variations to run
+            </span>
+          </div>
+          <div className="max-h-48 overflow-y-auto p-1">
+            {variations.map((variation) => (
+              <label
+                key={variation}
+                className="flex items-start gap-2 p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedVariations.includes(variation)}
+                  onChange={() => toggleVariation(variation)}
+                  className="mt-0.5 rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="text-sm text-gray-700 dark:text-gray-300 break-words">
+                  {variation}
+                </span>
+              </label>
+            ))}
+          </div>
+          {hasSelections && (
+            <div className="p-2 border-t border-gray-100 dark:border-gray-700">
+              <button
+                type="button"
+                onClick={() => onUpdate([])}
+                className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SortableTimelineItem({ 
   item, 
   index,
   onRemove, 
-  onUpdateDuration, 
+  onUpdateDuration,
+  onUpdateVariations,
   onViewDetails,
   onReorderGroup,
   onAddDrillToGroup,
@@ -78,6 +181,7 @@ export function SortableTimelineItem({
               onReorderGroup={onReorderGroup}
               onRemove={onRemove}
               onUpdateDuration={onUpdateDuration}
+              onUpdateVariations={onUpdateVariations}
               onViewDetails={onViewDetails}
               onAddDrillToGroup={onAddDrillToGroup}
               onAddNestedSplit={onAddNestedSplit}
@@ -110,6 +214,11 @@ export function SortableTimelineItem({
 
   const effectiveDuration = drillItem.customDuration || drillItem.drill.duration;
   const isCustomDuration = drillItem.customDuration && drillItem.customDuration !== drillItem.drill.duration;
+  
+  // Parse variations from the drill
+  const availableVariations = parseVariations(drillItem.drill.variations);
+  const hasVariations = availableVariations.length > 0;
+  const selectedVariations = drillItem.selectedVariations || [];
 
   // Compact version for side-by-side group display
   if (compact) {
@@ -160,6 +269,16 @@ export function SortableTimelineItem({
               ))}
             </select>
           </div>
+
+          {/* Variations Dropdown (only if drill has variations) */}
+          {hasVariations && (
+            <VariationsDropdown
+              variations={availableVariations}
+              selectedVariations={selectedVariations}
+              onUpdate={(vars) => onUpdateVariations(drillItem.id, vars)}
+              compact
+            />
+          )}
 
           {/* Remove */}
           <button
@@ -239,6 +358,15 @@ export function SortableTimelineItem({
           )}
         </div>
 
+        {/* Variations Dropdown (only if drill has variations) */}
+        {hasVariations && (
+          <VariationsDropdown
+            variations={availableVariations}
+            selectedVariations={selectedVariations}
+            onUpdate={(vars) => onUpdateVariations(drillItem.id, vars)}
+          />
+        )}
+
         {/* Actions */}
         <Button
           size="sm"
@@ -286,6 +414,12 @@ export function SortableTimelineItem({
               <div>
                 <span className="font-medium text-gray-700 dark:text-gray-300">Coaching Points: </span>
                 <span className="text-gray-600 dark:text-gray-400">{drillItem.drill.coachingPoints}</span>
+              </div>
+            )}
+            {selectedVariations.length > 0 && (
+              <div>
+                <span className="font-medium text-gray-700 dark:text-gray-300">Selected Variations: </span>
+                <span className="text-gray-600 dark:text-gray-400">{selectedVariations.join(', ')}</span>
               </div>
             )}
             {drillItem.drill.equipment && (
