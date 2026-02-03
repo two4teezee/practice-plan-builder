@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { format } from 'date-fns';
-import { db, ensurePlanHasTimeline } from '@/lib/db';
+import { db, refreshPlanDrillData } from '@/lib/db';
 import type { PracticePlan, TimelineItem, DrillItem, ParallelSplitItem } from '@/lib/types';
 import { flattenTimelineDrills, getTimelineItemDuration, secondsToDurationString } from '@/lib/types';
 import { Card } from '@/components/ui/Card';
@@ -26,14 +26,28 @@ import {
   Eye,
   ChevronDown,
   ChevronUp,
-  GitBranch
+  GitBranch,
+  Image as ImageIcon
 } from 'lucide-react';
 import { LAYOUT_STYLES } from '@/lib/layoutConfig';
+
+// Helper to extract image preview from sketch data
+function getSketchImagePreview(sketchData?: string): string | null {
+  if (!sketchData) return null;
+  try {
+    const data = JSON.parse(sketchData);
+    return data.imagePreview || null;
+  } catch {
+    return null;
+  }
+}
 
 // Component to render a single drill item
 function DrillItemView({ item, index }: { item: DrillItem; index?: number }) {
   const duration = item.customDuration || item.drill.duration;
   const hasVariations = item.selectedVariations && item.selectedVariations.length > 0;
+  const sketchImage = getSketchImagePreview(item.drill.sketchData);
+  
   return (
     <div className="p-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
       <div className="flex items-center gap-3">
@@ -45,6 +59,7 @@ function DrillItemView({ item, index }: { item: DrillItem; index?: number }) {
         <span className="font-medium text-gray-900 dark:text-white text-sm flex-1">
           {item.drill.name}
         </span>
+        {sketchImage && <ImageIcon className="w-3.5 h-3.5 text-gray-400" />}
         <span className="text-xs text-gray-500 dark:text-gray-400">
           {duration}
         </span>
@@ -142,39 +157,54 @@ function TimelineItemView({ item, index, compact = false }: { item: TimelineItem
 function DrillItemModalView({ item, index }: { item: DrillItem; index: number }) {
   const duration = item.customDuration || item.drill.duration;
   const hasVariations = item.selectedVariations && item.selectedVariations.length > 0;
+  const sketchImage = getSketchImagePreview(item.drill.sketchData);
+  
   return (
     <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">
       <div className="flex items-start gap-3">
-        <span className="w-8 h-8 flex items-center justify-center bg-primary-100 dark:bg-primary-900/30 rounded-full font-bold text-primary-700 dark:text-primary-300">
+        <span className="w-8 h-8 flex items-center justify-center bg-primary-100 dark:bg-primary-900/30 rounded-full font-bold text-primary-700 dark:text-primary-300 flex-shrink-0">
           {index + 1}
         </span>
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-2">
-            <h4 className="font-medium text-gray-900 dark:text-white">{item.drill.name}</h4>
-            <span className="text-sm text-gray-500 dark:text-gray-400">{duration}</span>
-            {item.customDuration && item.customDuration !== item.drill.duration && (
-              <span className="text-xs text-primary-600 dark:text-primary-400">(modified)</span>
+        <div className={`flex-1 min-w-0 ${sketchImage ? 'flex gap-4' : ''}`}>
+          {/* Text content */}
+          <div className={sketchImage ? 'flex-1 min-w-0' : ''}>
+            <div className="flex items-center gap-2 mb-2">
+              <h4 className="font-medium text-gray-900 dark:text-white">{item.drill.name}</h4>
+              <span className="text-sm text-gray-500 dark:text-gray-400">{duration}</span>
+              {item.customDuration && item.customDuration !== item.drill.duration && (
+                <span className="text-xs text-primary-600 dark:text-primary-400">(modified)</span>
+              )}
+            </div>
+            {item.drill.objective && (
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+                <strong>Objective:</strong> {item.drill.objective}
+              </p>
+            )}
+            {item.drill.execution && (
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+                <strong>Execution:</strong> {item.drill.execution}
+              </p>
+            )}
+            {item.drill.coachingPoints && (
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+                <strong>Coaching Points:</strong> {item.drill.coachingPoints}
+              </p>
+            )}
+            {hasVariations && (
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                <strong>Variations:</strong> {item.selectedVariations!.join(', ')}
+              </p>
             )}
           </div>
-          {item.drill.objective && (
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
-              <strong>Objective:</strong> {item.drill.objective}
-            </p>
-          )}
-          {item.drill.execution && (
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
-              <strong>Execution:</strong> {item.drill.execution}
-            </p>
-          )}
-          {item.drill.coachingPoints && (
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
-              <strong>Coaching Points:</strong> {item.drill.coachingPoints}
-            </p>
-          )}
-          {hasVariations && (
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              <strong>Variations:</strong> {item.selectedVariations!.join(', ')}
-            </p>
+          {/* Sketch Image - right column */}
+          {sketchImage && (
+            <div className="flex-shrink-0 w-48 border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden bg-white self-start">
+              <img 
+                src={sketchImage} 
+                alt={`Sketch for ${item.drill.name}`}
+                className="w-full"
+              />
+            </div>
           )}
         </div>
       </div>
@@ -233,22 +263,38 @@ function TimelineItemModalView({ item, index, nested = false }: { item: Timeline
     if (nested) {
       const duration = item.customDuration || item.drill.duration;
       const hasVariations = item.selectedVariations && item.selectedVariations.length > 0;
+      const sketchImage = getSketchImagePreview(item.drill.sketchData);
       return (
         <div className="p-2 bg-gray-50 dark:bg-gray-700 rounded-lg">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="font-medium text-sm text-gray-900 dark:text-white">{item.drill.name}</span>
-            <span className="text-xs text-gray-500 dark:text-gray-400">{duration}</span>
+          <div className={sketchImage ? 'flex gap-2' : ''}>
+            {/* Text content */}
+            <div className={sketchImage ? 'flex-1 min-w-0' : ''}>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="font-medium text-sm text-gray-900 dark:text-white">{item.drill.name}</span>
+                <span className="text-xs text-gray-500 dark:text-gray-400">{duration}</span>
+              </div>
+              {item.drill.objective && (
+                <p className="text-xs text-gray-600 dark:text-gray-400">
+                  {item.drill.objective}
+                </p>
+              )}
+              {hasVariations && (
+                <p className="text-xs text-gray-600 dark:text-gray-400">
+                  <strong>Variations:</strong> {item.selectedVariations!.join(', ')}
+                </p>
+              )}
+            </div>
+            {/* Sketch - right column */}
+            {sketchImage && (
+              <div className="flex-shrink-0 w-24 border border-gray-200 dark:border-gray-600 rounded overflow-hidden bg-white self-start">
+                <img 
+                  src={sketchImage} 
+                  alt={`Sketch for ${item.drill.name}`}
+                  className="w-full"
+                />
+              </div>
+            )}
           </div>
-          {item.drill.objective && (
-            <p className="text-xs text-gray-600 dark:text-gray-400">
-              {item.drill.objective}
-            </p>
-          )}
-          {hasVariations && (
-            <p className="text-xs text-gray-600 dark:text-gray-400">
-              <strong>Variations:</strong> {item.selectedVariations!.join(', ')}
-            </p>
-          )}
         </div>
       );
     }
@@ -265,8 +311,11 @@ export default function HistoryPage() {
   const practicePlans = useLiveQuery(
     async () => {
       const plans = await db.practicePlans.orderBy('createdAt').reverse().toArray();
-      // Ensure all plans have timeline for backward compatibility
-      return plans.map(plan => ensurePlanHasTimeline(plan));
+      // Ensure all plans have timeline and refresh drill data (for updated sketches, etc.)
+      const refreshedPlans = await Promise.all(
+        plans.map(plan => refreshPlanDrillData(plan))
+      );
+      return refreshedPlans;
     },
     []
   );
@@ -290,8 +339,8 @@ export default function HistoryPage() {
     await exportPracticePlanToWord(plan);
   };
 
-  const handlePrint = (plan: PracticePlan) => {
-    printPracticePlan(plan);
+  const handlePrint = async (plan: PracticePlan) => {
+    await printPracticePlan(plan);
   };
 
   const toggleExpand = (planId: number | undefined) => {

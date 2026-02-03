@@ -68,6 +68,80 @@ export function ensurePlanHasTimeline(plan: PracticePlan): PracticePlan {
   return plan;
 }
 
+// Helper to recursively refresh drill data in timeline items
+async function refreshTimelineItems(items: TimelineItem[], drillsMap: Map<number, Drill>): Promise<TimelineItem[]> {
+  return Promise.all(items.map(async (item) => {
+    if (item.type === 'drill') {
+      const freshDrill = drillsMap.get(item.drillId);
+      if (freshDrill) {
+        return {
+          ...item,
+          drill: freshDrill,
+        };
+      }
+      return item;
+    } else {
+      // Parallel split - recursively refresh groups
+      return {
+        ...item,
+        groups: await Promise.all(item.groups.map(async (group) => ({
+          ...group,
+          items: await refreshTimelineItems(group.items, drillsMap),
+        }))),
+      };
+    }
+  }));
+}
+
+// Refresh a practice plan's drill data with latest from database
+// This ensures sketches and other drill updates are reflected
+export async function refreshPlanDrillData(plan: PracticePlan): Promise<PracticePlan> {
+  const normalizedPlan = ensurePlanHasTimeline(plan);
+  
+  if (!normalizedPlan.timeline || normalizedPlan.timeline.length === 0) {
+    return normalizedPlan;
+  }
+  
+  // Collect all drill IDs from the timeline
+  const collectDrillIds = (items: TimelineItem[]): number[] => {
+    const ids: number[] = [];
+    for (const item of items) {
+      if (item.type === 'drill') {
+        ids.push(item.drillId);
+      } else {
+        for (const group of item.groups) {
+          ids.push(...collectDrillIds(group.items));
+        }
+      }
+    }
+    return ids;
+  };
+  
+  const drillIds = [...new Set(collectDrillIds(normalizedPlan.timeline))];
+  
+  // Fetch all drills at once
+  const drills = await db.drills.where('id').anyOf(drillIds).toArray();
+  const drillsMap = new Map(drills.map(d => [d.id!, d]));
+  
+  // Refresh the timeline with fresh drill data
+  const refreshedTimeline = await refreshTimelineItems(normalizedPlan.timeline, drillsMap);
+  
+  // Also refresh legacy drills array if present
+  const refreshedDrills = normalizedPlan.drills?.map(d => {
+    const freshDrill = drillsMap.get(d.drillId);
+    if (freshDrill) {
+      return { ...d, drill: freshDrill };
+    }
+    return d;
+  });
+  
+  return {
+    ...normalizedPlan,
+    timeline: refreshedTimeline,
+    drills: refreshedDrills || [],
+  };
+}
+
 export { db };
 
 // Seed data for initial drills
