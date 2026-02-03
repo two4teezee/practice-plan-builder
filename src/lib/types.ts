@@ -17,6 +17,7 @@ export interface Drill {
   description: string;
   videoLink: string;
   pdfLink: string;
+  sketchData?: string; // JSON string containing sketch strokes and rink view
   createdAt: Date;
   updatedAt: Date;
 }

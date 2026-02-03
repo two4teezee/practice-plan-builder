@@ -1,21 +1,27 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Input } from '@/components/ui/Input';
-import { Select } from '@/components/ui/Select';
-import { Textarea } from '@/components/ui/Textarea';
 import { Button } from '@/components/ui/Button';
 import { EquipmentPicker } from '@/components/ui/EquipmentPicker';
-import { Drill, DRILL_CATEGORIES, SKILL_FOCUSES, DRILL_DURATIONS } from '@/lib/types';
-import { Save, X, Copy, Trash2 } from 'lucide-react';
+import { DrillSketchModal } from '@/components/drills/DrillSketchModal';
+import type { Drill, SkillFocus } from '@/lib/types';
+import { DRILL_CATEGORIES, SKILL_FOCUSES, DRILL_DURATIONS } from '@/lib/types';
+import { Save, X, Plus, Trash2, Pencil } from 'lucide-react';
 
-const DRAFT_STORAGE_KEY = 'drill-form-draft';
+interface DrillFormProps {
+  drill?: Drill | null;
+  onSave: (drill: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  onCancel: () => void;
+  onCreateNew?: (drill: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  onDelete?: (drill: Drill) => void;
+  isCreatingNew?: boolean;
+}
 
-interface DrillFormData {
+type FormData = {
   name: string;
-  category: string;
+  category: typeof DRILL_CATEGORIES[number];
   duration: string;
-  skillFocus: string;
+  skillFocus: SkillFocus;
   objective: string;
   setup: string;
   execution: string;
@@ -25,26 +31,14 @@ interface DrillFormData {
   description: string;
   videoLink: string;
   pdfLink: string;
-}
+  sketchData: string;
+};
 
-interface StoredDraft {
-  drillId: number | null;
-  formData: DrillFormData;
-}
-
-interface DrillFormProps {
-  drill?: Drill | null;
-  onSave: (drill: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>) => void;
-  onSaveAsNew?: (drill: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>) => void;
-  onDelete?: (drill: Drill) => void;
-  onCancel: () => void;
-}
-
-const getInitialFormData = (): DrillFormData => ({
+const getDefaultFormData = (): FormData => ({
   name: '',
   category: DRILL_CATEGORIES[0],
   duration: '5:00',
-  skillFocus: SKILL_FOCUSES[0], // Keep for data compatibility but not shown in form
+  skillFocus: SKILL_FOCUSES[0], // Keep for data compatibility but not shown in UI
   objective: '',
   setup: '',
   execution: '',
@@ -54,302 +48,355 @@ const getInitialFormData = (): DrillFormData => ({
   description: '',
   videoLink: '',
   pdfLink: '',
+  sketchData: '',
 });
 
-export function DrillForm({ drill, onSave, onSaveAsNew, onDelete, onCancel }: DrillFormProps) {
-  const [formData, setFormData] = useState<DrillFormData>(getInitialFormData);
-  const [hasChanges, setHasChanges] = useState(false);
+// Compact styling to match practice plan details panel
+const labelStyle = { fontSize: '0.6875rem' }; // 11px
+const inputStyle = { 
+  fontSize: '0.8125rem', // 13px
+  paddingTop: '0.375rem', // 6px
+  paddingBottom: '0.375rem',
+  paddingLeft: '0.5rem', // 8px
+  paddingRight: '0.5rem',
+};
 
-  // Load saved draft or drill data on mount
+// Get storage key for form data
+const getStorageKey = (drillId: number | undefined, isCreatingNew: boolean): string => {
+  if (isCreatingNew) return 'drill-form-new';
+  return drillId ? `drill-form-${drillId}` : 'drill-form-new';
+};
+
+export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCreatingNew = false }: DrillFormProps) {
+  const [formData, setFormData] = useState<FormData>(getDefaultFormData());
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [isSketchModalOpen, setIsSketchModalOpen] = useState(false);
+
+  // Get form data from drill or defaults
+  const getDrillFormData = useCallback((d: Drill): FormData => ({
+    name: d.name,
+    category: d.category,
+    duration: d.duration,
+    skillFocus: d.skillFocus,
+    objective: d.objective,
+    setup: d.setup,
+    execution: d.execution,
+    coachingPoints: d.coachingPoints,
+    variations: d.variations,
+    equipment: d.equipment,
+    description: d.description,
+    videoLink: d.videoLink,
+    pdfLink: d.pdfLink,
+    sketchData: d.sketchData || '',
+  }), []);
+
+  // Load form data - check localStorage first, then fall back to drill data or defaults
   useEffect(() => {
+    const storageKey = getStorageKey(drill?.id, isCreatingNew);
+    
     try {
-      const savedDraft = localStorage.getItem(DRAFT_STORAGE_KEY);
-      if (savedDraft) {
-        const parsed: StoredDraft = JSON.parse(savedDraft);
-        // Only restore if editing the same drill (or both are new drills)
-        if (parsed.drillId === (drill?.id ?? null)) {
-          setFormData(parsed.formData);
-          setHasChanges(true);
-          return;
-        }
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        // We have saved form data - use it
+        const parsed = JSON.parse(saved) as FormData;
+        setFormData(parsed);
+      } else if (drill) {
+        // No saved data, but we have a drill - use its data
+        setFormData(getDrillFormData(drill));
+      } else {
+        // No saved data and no drill - use defaults
+        setFormData(getDefaultFormData());
       }
     } catch (error) {
-      console.error('Failed to load draft:', error);
+      console.error('Failed to load form data:', error);
+      // Fall back to drill data or defaults
+      if (drill) {
+        setFormData(getDrillFormData(drill));
+      } else {
+        setFormData(getDefaultFormData());
+      }
     }
+    
+    setIsInitialized(true);
+  }, [drill, isCreatingNew, getDrillFormData]);
 
-    // No matching draft, load from drill prop
-    if (drill) {
-      setFormData({
-        name: drill.name,
-        category: drill.category,
-        duration: drill.duration,
-        skillFocus: drill.skillFocus,
-        objective: drill.objective,
-        setup: drill.setup,
-        execution: drill.execution,
-        coachingPoints: drill.coachingPoints,
-        variations: drill.variations,
-        equipment: drill.equipment,
-        description: drill.description,
-        videoLink: drill.videoLink,
-        pdfLink: drill.pdfLink,
-      });
-    } else {
-      setFormData(getInitialFormData());
-    }
-    setHasChanges(false);
-  }, [drill]);
-
-  // Save draft to localStorage whenever form data changes
-  const saveDraft = useCallback(() => {
-    if (!hasChanges) return;
-    try {
-      const draft: StoredDraft = {
-        drillId: drill?.id ?? null,
-        formData,
-      };
-      localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
-    } catch (error) {
-      console.error('Failed to save draft:', error);
-    }
-  }, [drill?.id, formData, hasChanges]);
-
-  // Save draft on unmount or when navigating away
+  // Save form data to localStorage when it changes
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      saveDraft();
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      saveDraft();
-    };
-  }, [saveDraft]);
-
-  const clearDraft = () => {
+    if (!isInitialized) return;
+    
+    const storageKey = getStorageKey(drill?.id, isCreatingNew);
     try {
-      localStorage.removeItem(DRAFT_STORAGE_KEY);
+      localStorage.setItem(storageKey, JSON.stringify(formData));
     } catch (error) {
-      console.error('Failed to clear draft:', error);
+      console.error('Failed to save form data:', error);
     }
-  };
+  }, [formData, drill?.id, isCreatingNew, isInitialized]);
 
-  const handleFieldChange = (field: keyof DrillFormData, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-    setHasChanges(true);
-  };
-
-  const isEditing = !!drill;
-
-  const handleUpdate = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // For editing existing drills, confirm before updating
-    if (isEditing) {
-      if (confirm('Are you sure you want to update this drill?')) {
-        clearDraft();
-        onSave(formData as Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>);
-      }
-    } else {
-      // For new drills, just save directly
-      clearDraft();
-      onSave(formData as Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>);
-    }
+    onSave(formData);
   };
 
-  const handleSaveAsNew = () => {
-    clearDraft();
-    if (onSaveAsNew) {
-      onSaveAsNew(formData as Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>);
+  const handleCreateNew = () => {
+    if (onCreateNew) {
+      onCreateNew(formData);
     }
   };
 
   const handleDelete = () => {
     if (drill && onDelete) {
-      if (confirm(`Are you sure you want to delete "${drill.name}"?`)) {
-        clearDraft();
-        onDelete(drill);
-      }
+      onDelete(drill);
     }
   };
 
-  const handleCancel = () => {
-    // If there are unsaved changes, confirm before discarding
-    if (hasChanges) {
-      if (confirm('You have unsaved changes. Are you sure you want to discard them?')) {
-        clearDraft();
-        onCancel();
-      }
-    } else {
-      clearDraft();
-      onCancel();
-    }
+  const handleSketchSave = (sketchData: string) => {
+    setFormData({ ...formData, sketchData });
   };
 
-  const categoryOptions = DRILL_CATEGORIES.map(c => ({ value: c, label: c }));
-  const durationOptions = DRILL_DURATIONS.map(d => ({ value: d, label: d }));
-  
-  // For new drills, require at least a name to enable create button
-  // For editing, require changes to enable update button
-  const canSubmit = isEditing ? hasChanges : formData.name.trim().length > 0;
+  const inputClasses = "w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500";
 
   return (
-    <form onSubmit={handleUpdate} className="flex flex-col h-full">
-      {/* Form content - no scrolling, fits on page */}
-      <div className="space-y-2">
-        {/* Name, Duration, Category on same line */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-          <Input
+    <form onSubmit={handleSubmit} className="flex flex-col gap-2">
+      {/* Name, Duration, Category on single line */}
+      <div className="grid grid-cols-[1fr_auto_auto] gap-2">
+        <div>
+          <label htmlFor="name" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            Drill Name
+          </label>
+          <input
             id="name"
-            label="Drill Name"
+            type="text"
             value={formData.name}
-            onChange={(e) => handleFieldChange('name', e.target.value)}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             placeholder="Enter drill name"
             required
-            compact
+            className={inputClasses}
+            style={inputStyle}
           />
-          <Select
+        </div>
+        <div>
+          <label htmlFor="duration" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            Duration
+          </label>
+          <select
             id="duration"
-            label="Duration"
             value={formData.duration}
-            onChange={(e) => handleFieldChange('duration', e.target.value)}
-            options={durationOptions}
-            compact
-          />
-          <Select
+            onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
+            className={inputClasses}
+            style={{ ...inputStyle, minWidth: '5rem' }}
+          >
+            {DRILL_DURATIONS.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="category" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            Category
+          </label>
+          <select
             id="category"
-            label="Category"
             value={formData.category}
-            onChange={(e) => handleFieldChange('category', e.target.value)}
-            options={categoryOptions}
-            compact
-          />
+            onChange={(e) => setFormData({ ...formData, category: e.target.value as typeof formData.category })}
+            className={inputClasses}
+            style={{ ...inputStyle, minWidth: '6rem' }}
+          >
+            {DRILL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
         </div>
+      </div>
 
-        {/* Description and Objective side by side */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          <Textarea
-            id="description"
-            label="Description"
-            value={formData.description}
-            onChange={(e) => handleFieldChange('description', e.target.value)}
-            placeholder="Brief description of the drill"
-            rows={2}
-            compact
-          />
-          <Textarea
-            id="objective"
-            label="Objective"
-            value={formData.objective}
-            onChange={(e) => handleFieldChange('objective', e.target.value)}
-            placeholder="What is the goal of this drill?"
-            rows={2}
-            compact
-          />
-        </div>
-
-        {/* Setup and Execution side by side */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          <Textarea
-            id="setup"
-            label="Setup"
-            value={formData.setup}
-            onChange={(e) => handleFieldChange('setup', e.target.value)}
-            placeholder="How to set up the drill"
-            rows={2}
-            compact
-          />
-          <Textarea
-            id="execution"
-            label="Execution"
-            value={formData.execution}
-            onChange={(e) => handleFieldChange('execution', e.target.value)}
-            placeholder="How to run the drill"
-            rows={2}
-            compact
-          />
-        </div>
-
-        {/* Coaching Points and Variations side by side */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          <Textarea
-            id="coachingPoints"
-            label="Coaching Points"
-            value={formData.coachingPoints}
-            onChange={(e) => handleFieldChange('coachingPoints', e.target.value)}
-            placeholder="Key points for coaches"
-            rows={2}
-            compact
-          />
-          <Textarea
-            id="variations"
-            label="Variations"
-            value={formData.variations}
-            onChange={(e) => handleFieldChange('variations', e.target.value)}
-            placeholder="Alternative ways to run this drill"
-            rows={2}
-            compact
-          />
-        </div>
-
-        {/* Equipment */}
-        <EquipmentPicker
-          label="Equipment"
-          value={formData.equipment}
-          onChange={(value) => handleFieldChange('equipment', value)}
-          compact
+      <div>
+        <label htmlFor="description" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+          Description
+        </label>
+        <textarea
+          id="description"
+          value={formData.description}
+          onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+          placeholder="Brief description of the drill"
+          rows={2}
+          className={`${inputClasses} resize-none`}
+          style={inputStyle}
         />
+      </div>
 
-        {/* Video and PDF links */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          <Input
+      <div>
+        <label htmlFor="objective" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+          Objective
+        </label>
+        <textarea
+          id="objective"
+          value={formData.objective}
+          onChange={(e) => setFormData({ ...formData, objective: e.target.value })}
+          placeholder="What is the goal of this drill?"
+          rows={2}
+          className={`${inputClasses} resize-none`}
+          style={inputStyle}
+        />
+      </div>
+
+      <div>
+        <label htmlFor="setup" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+          Setup
+        </label>
+        <textarea
+          id="setup"
+          value={formData.setup}
+          onChange={(e) => setFormData({ ...formData, setup: e.target.value })}
+          placeholder="How to set up the drill"
+          rows={2}
+          className={`${inputClasses} resize-none`}
+          style={inputStyle}
+        />
+      </div>
+
+      <div>
+        <label htmlFor="execution" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+          Execution
+        </label>
+        <textarea
+          id="execution"
+          value={formData.execution}
+          onChange={(e) => setFormData({ ...formData, execution: e.target.value })}
+          placeholder="How to run the drill"
+          rows={2}
+          className={`${inputClasses} resize-none`}
+          style={inputStyle}
+        />
+      </div>
+
+      <div>
+        <label htmlFor="coachingPoints" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+          Coaching Points
+        </label>
+        <textarea
+          id="coachingPoints"
+          value={formData.coachingPoints}
+          onChange={(e) => setFormData({ ...formData, coachingPoints: e.target.value })}
+          placeholder="Key points for coaches"
+          rows={2}
+          className={`${inputClasses} resize-none`}
+          style={inputStyle}
+        />
+      </div>
+
+      <div>
+        <label htmlFor="variations" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+          Variations
+        </label>
+        <textarea
+          id="variations"
+          value={formData.variations}
+          onChange={(e) => setFormData({ ...formData, variations: e.target.value })}
+          placeholder="Alternative ways to run this drill"
+          rows={2}
+          className={`${inputClasses} resize-none`}
+          style={inputStyle}
+        />
+      </div>
+
+      <EquipmentPicker
+        label="Equipment"
+        value={formData.equipment}
+        onChange={(value) => setFormData({ ...formData, equipment: value })}
+        compact
+        hideSummary
+      />
+
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label htmlFor="videoLink" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            Video Link
+          </label>
+          <input
             id="videoLink"
-            label="Video Link"
             type="url"
             value={formData.videoLink}
-            onChange={(e) => handleFieldChange('videoLink', e.target.value)}
+            onChange={(e) => setFormData({ ...formData, videoLink: e.target.value })}
             placeholder="https://youtube.com/..."
-            compact
+            className={inputClasses}
+            style={inputStyle}
           />
-          <Input
+        </div>
+        <div>
+          <label htmlFor="pdfLink" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            PDF Link
+          </label>
+          <input
             id="pdfLink"
-            label="PDF Link"
             type="url"
             value={formData.pdfLink}
-            onChange={(e) => handleFieldChange('pdfLink', e.target.value)}
+            onChange={(e) => setFormData({ ...formData, pdfLink: e.target.value })}
             placeholder="https://example.com/drill.pdf"
-            compact
+            className={inputClasses}
+            style={inputStyle}
           />
         </div>
       </div>
 
-      {/* Fixed action buttons at bottom */}
-      <div className="flex justify-between gap-2 pt-3 mt-3 border-t border-gray-200 dark:border-gray-800 flex-shrink-0">
-        <div className="flex gap-2">
-          {isEditing && onDelete && (
-            <Button type="button" variant="ghost" onClick={handleDelete} className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20">
-              <Trash2 className="w-4 h-4" />
-              Delete
-            </Button>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <Button type="button" variant="outline" onClick={handleCancel}>
-            <X className="w-4 h-4" />
-            Cancel
+      <div className="flex flex-wrap gap-2 pt-3 border-t border-gray-200 dark:border-gray-800 mt-1">
+        <Button type="button" variant="outline" onClick={onCancel}>
+          <X className="w-4 h-4" />
+          Cancel
+        </Button>
+        
+        <Button
+          type="button"
+          variant={formData.sketchData ? 'secondary' : 'outline'}
+          onClick={() => setIsSketchModalOpen(true)}
+        >
+          <Pencil className="w-4 h-4" />
+          {formData.sketchData ? 'Edit Sketch' : 'Sketch Drill'}
+        </Button>
+        
+        {isCreatingNew ? (
+          // Creating new drill mode - only show Create button
+          <Button type="submit" className="ml-auto">
+            <Plus className="w-4 h-4" />
+            Create Drill
           </Button>
-          {isEditing && onSaveAsNew && (
-            <Button type="button" variant="secondary" onClick={handleSaveAsNew}>
-              <Copy className="w-4 h-4" />
-              Create as New
-            </Button>
-          )}
-          <Button type="submit" disabled={!canSubmit}>
+        ) : drill ? (
+          // Editing existing drill - show Update, Create New, and Delete
+          <>
+            {onDelete && (
+              <Button 
+                type="button" 
+                variant="outline" 
+                onClick={handleDelete}
+                className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 border-red-300 dark:border-red-700"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete
+              </Button>
+            )}
+            <div className="flex gap-2 ml-auto">
+              {onCreateNew && (
+                <Button type="button" variant="secondary" onClick={handleCreateNew}>
+                  <Plus className="w-4 h-4" />
+                  Create as New
+                </Button>
+              )}
+              <Button type="submit">
+                <Save className="w-4 h-4" />
+                Update Drill
+              </Button>
+            </div>
+          </>
+        ) : (
+          // No drill selected - shouldn't happen but fallback
+          <Button type="submit" className="ml-auto">
             <Save className="w-4 h-4" />
-            {isEditing ? 'Update' : 'Create'}
+            Save
           </Button>
-        </div>
+        )}
       </div>
+
+      {/* Sketch Modal */}
+      <DrillSketchModal
+        isOpen={isSketchModalOpen}
+        onClose={() => setIsSketchModalOpen(false)}
+        onSave={handleSketchSave}
+        initialSketchData={formData.sketchData}
+      />
     </form>
   );
 }

@@ -31,6 +31,12 @@ db.version(3).stores({
   });
 });
 
+// Version 4: Add sketchData field to drills for drill diagrams
+db.version(4).stores({
+  drills: '++id, name, category, skillFocus, createdAt',
+  practicePlans: '++id, name, date, createdAt',
+});
+
 // Migration helper: convert legacy PracticePlanDrill[] to TimelineItem[]
 function migrateDrillsToTimeline(drills: PracticePlanDrill[]): TimelineItem[] {
   return drills
