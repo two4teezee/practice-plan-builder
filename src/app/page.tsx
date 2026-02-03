@@ -78,6 +78,12 @@ export default function CreatePracticePlanPage() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   
+  // Duplicate name modal state
+  const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
+  const [duplicatePlanId, setDuplicatePlanId] = useState<number | null>(null);
+  const [newPlanName, setNewPlanName] = useState('');
+  const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
+  
   const [formData, setFormData] = useState(getDefaultFormData);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   
@@ -392,11 +398,26 @@ export default function CreatePracticePlanPage() {
       return;
     }
 
+    // Check for existing plan with the same name
+    const existingPlan = await db.practicePlans.where('name').equals(formData.name).first();
+    if (existingPlan && existingPlan.id) {
+      // Open duplicate modal to ask user what to do
+      setDuplicatePlanId(existingPlan.id);
+      setNewPlanName(formData.name + ' (copy)');
+      setIsDuplicateModalOpen(true);
+      return;
+    }
+
+    await saveNewPlan();
+  };
+
+  // Save as a new plan (no duplicate check)
+  const saveNewPlan = async (overrideName?: string) => {
     setIsSaving(true);
     try {
       const now = new Date();
       const practicePlan: Omit<PracticePlan, 'id'> = {
-        name: formData.name,
+        name: overrideName || formData.name,
         description: formData.description,
         date: new Date(formData.date),
         duration: formData.duration,
@@ -411,12 +432,10 @@ export default function CreatePracticePlanPage() {
 
       await db.practicePlans.add(practicePlan);
       
-      // Clear draft and reset form after successful save
-      clearDraft();
-      setFormData(getDefaultFormData());
-      
-      // Re-add the default setup drill for the next practice plan
-      await addDefaultSetupDrill();
+      // Update the form name if we used an override name
+      if (overrideName) {
+        setFormData(prev => ({ ...prev, name: overrideName }));
+      }
       
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
@@ -426,6 +445,60 @@ export default function CreatePracticePlanPage() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  // Overwrite an existing plan
+  const overwritePlan = async (planId: number) => {
+    setIsSaving(true);
+    try {
+      const now = new Date();
+      await db.practicePlans.update(planId, {
+        name: formData.name,
+        description: formData.description,
+        date: new Date(formData.date),
+        duration: formData.duration,
+        location: formData.location,
+        drills: drills,
+        timeline: timeline,
+        notes: formData.notes,
+        equipment: equipment,
+        updatedAt: now,
+      });
+      
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (error) {
+      console.error('Failed to overwrite practice plan:', error);
+      alert('Failed to overwrite practice plan. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Handle duplicate modal actions
+  const handleOverwritePlanClick = () => {
+    setShowOverwriteConfirm(true);
+  };
+
+  const handleConfirmOverwritePlan = async () => {
+    if (duplicatePlanId) {
+      await overwritePlan(duplicatePlanId);
+    }
+    setShowOverwriteConfirm(false);
+    setIsDuplicateModalOpen(false);
+    setDuplicatePlanId(null);
+  };
+
+  const handleSaveAsNew = async () => {
+    // Check if the new name is also a duplicate
+    const existingPlan = await db.practicePlans.where('name').equals(newPlanName).first();
+    if (existingPlan) {
+      alert('A plan with this name already exists. Please choose a different name.');
+      return;
+    }
+    await saveNewPlan(newPlanName);
+    setIsDuplicateModalOpen(false);
+    setDuplicatePlanId(null);
   };
 
   const handleClear = async () => {
@@ -791,6 +864,98 @@ export default function CreatePracticePlanPage() {
               ))}
             </div>
           )}
+        </div>
+      </Modal>
+
+      {/* Duplicate Name Modal */}
+      <Modal
+        isOpen={isDuplicateModalOpen}
+        onClose={() => {
+          setIsDuplicateModalOpen(false);
+          setDuplicatePlanId(null);
+        }}
+        title="Plan Already Exists"
+        size="md"
+      >
+        <div className="space-y-4">
+          <p className="text-gray-600 dark:text-gray-400">
+            A practice plan named <strong className="text-gray-900 dark:text-white">&quot;{formData.name}&quot;</strong> already exists.
+          </p>
+          
+          <div className="space-y-3">
+            <Button
+              variant="primary"
+              className="w-full justify-center"
+              onClick={handleOverwritePlanClick}
+              disabled={isSaving}
+            >
+              <Save className="w-4 h-4" />
+              Overwrite Existing Plan
+            </Button>
+            
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-3">
+              <label 
+                htmlFor="newPlanName" 
+                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+              >
+                Or save as a new plan with a different name:
+              </label>
+              <input
+                id="newPlanName"
+                type="text"
+                value={newPlanName}
+                onChange={(e) => setNewPlanName(e.target.value)}
+                placeholder="Enter new name"
+                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 px-3 py-2 text-sm"
+              />
+              <Button
+                variant="outline"
+                className="w-full justify-center mt-2"
+                onClick={handleSaveAsNew}
+                disabled={isSaving || !newPlanName.trim()}
+              >
+                <Plus className="w-4 h-4" />
+                Save as New Plan
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Overwrite Confirmation Modal */}
+      <Modal
+        isOpen={showOverwriteConfirm}
+        onClose={() => setShowOverwriteConfirm(false)}
+        title="Confirm Overwrite"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+              <Save className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+            </div>
+            <div>
+              <p className="text-gray-700 dark:text-gray-300">
+                Are you sure you want to overwrite the existing practice plan?
+              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                <strong>&quot;{formData.name}&quot;</strong> will be permanently replaced with your current plan. This action cannot be undone.
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setShowOverwriteConfirm(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleConfirmOverwritePlan}
+              disabled={isSaving}
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              <Save className="w-4 h-4" />
+              {isSaving ? 'Overwriting...' : 'Overwrite Plan'}
+            </Button>
+          </div>
         </div>
       </Modal>
     </div>
