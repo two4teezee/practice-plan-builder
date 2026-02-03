@@ -10,8 +10,7 @@ import { DrillForm } from '@/components/drills/DrillForm';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Plus, Search, Library, Download } from 'lucide-react';
-import { exportDrillsLibraryToPDF, exportDrillsLibraryToWord } from '@/lib/export';
+import { Plus, Search, Library } from 'lucide-react';
 import { LAYOUT_STYLES } from '@/lib/layoutConfig';
 
 const CATEGORY_FILTER_STORAGE_KEY = 'drills-category-filter';
@@ -109,14 +108,27 @@ export default function DrillsPage() {
     setEditingDrill(null);
   };
 
-  const handleEdit = (drill: Drill) => {
+  const handleSaveAsNew = async (drillData: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const now = new Date();
+    await db.drills.add({
+      ...drillData,
+      createdAt: now,
+      updatedAt: now,
+    });
+    setIsModalOpen(false);
+    setEditingDrill(null);
+  };
+
+  const handleCardClick = (drill: Drill) => {
     setEditingDrill(drill);
     setIsModalOpen(true);
   };
 
   const handleDelete = async (drill: Drill) => {
-    if (drill.id && confirm(`Are you sure you want to delete "${drill.name}"?`)) {
+    if (drill.id) {
       await db.drills.delete(drill.id);
+      setIsModalOpen(false);
+      setEditingDrill(null);
     }
   };
 
@@ -171,18 +183,6 @@ export default function DrillsPage() {
             className="pl-9 text-sm"
           />
         </div>
-        {drills && drills.length > 0 && (
-          <>
-            <Button size="sm" variant="secondary" onClick={() => drills && exportDrillsLibraryToPDF(drills)}>
-              <Download className="w-3.5 h-3.5" />
-              PDF
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => drills && exportDrillsLibraryToWord(drills)}>
-              <Download className="w-3.5 h-3.5" />
-              Word
-            </Button>
-          </>
-        )}
         <Button size="sm" onClick={handleNewDrill}>
           <Plus className="w-4 h-4" />
           New Drill
@@ -233,8 +233,7 @@ export default function DrillsPage() {
             <DrillCard
               key={drill.id}
               drill={drill}
-              onEdit={handleEdit}
-              onDelete={handleDelete}
+              onClick={handleCardClick}
             />
           ))}
         </div>
@@ -266,11 +265,13 @@ export default function DrillsPage() {
           setEditingDrill(null);
         }}
         title={editingDrill ? 'Edit Drill' : 'Create New Drill'}
-        size="lg"
+        size="drill"
       >
         <DrillForm
           drill={editingDrill}
           onSave={handleSave}
+          onSaveAsNew={editingDrill ? handleSaveAsNew : undefined}
+          onDelete={editingDrill ? handleDelete : undefined}
           onCancel={() => {
             setIsModalOpen(false);
             setEditingDrill(null);

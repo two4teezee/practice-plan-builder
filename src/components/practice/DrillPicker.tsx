@@ -7,7 +7,7 @@ import { Drill, DRILL_CATEGORIES, DrillCategory } from '@/lib/types';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { Search, Plus, Clock, Target } from 'lucide-react';
+import { Search, Plus, Clock } from 'lucide-react';
 
 const PICKER_CATEGORY_FILTER_KEY = 'drill-picker-category-filter';
 
@@ -160,10 +160,6 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
                     <div className="flex items-center gap-1">
                       <Clock className="w-3 h-3" />
                       <span>{drill.duration}</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Target className="w-3 h-3" />
-                      <span>{drill.skillFocus}</span>
                     </div>
                   </div>
                 </div>

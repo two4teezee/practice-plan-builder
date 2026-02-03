@@ -5,16 +5,25 @@ import { TextareaHTMLAttributes, forwardRef } from 'react';
 interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
   error?: string;
+  compact?: boolean;
 }
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ className = '', label, error, id, ...props }, ref) => {
+  ({ className = '', label, error, id, compact = false, ...props }, ref) => {
+    const sizeClasses = compact 
+      ? 'px-2 py-1.5 text-[13px] rounded-lg'
+      : 'px-4 py-2.5 rounded-xl';
+    
+    const labelClasses = compact
+      ? 'text-[11px] mb-1'
+      : 'text-sm mb-1.5';
+
     return (
       <div className="w-full">
         {label && (
           <label 
             htmlFor={id} 
-            className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5"
+            className={`block font-medium text-gray-700 dark:text-gray-300 ${labelClasses}`}
           >
             {label}
           </label>
@@ -23,7 +32,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
           ref={ref}
           id={id}
           className={`
-            w-full px-4 py-2.5 rounded-xl border resize-none
+            w-full ${sizeClasses} border resize-none
             bg-white dark:bg-gray-800 
             border-gray-300 dark:border-gray-600
             text-gray-900 dark:text-white
