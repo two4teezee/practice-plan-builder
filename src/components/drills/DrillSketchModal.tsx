@@ -1350,10 +1350,18 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
   };
 
   const handleSave = () => {
+    // Generate image preview from canvas
+    const canvas = canvasRef.current;
+    let imagePreview = '';
+    if (canvas) {
+      imagePreview = canvas.toDataURL('image/png');
+    }
+    
     const data = JSON.stringify({
       strokes,
       rinkView,
       placedObjects,
+      imagePreview,
     });
     onSave(data);
     onClose();

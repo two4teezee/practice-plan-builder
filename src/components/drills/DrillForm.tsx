@@ -213,184 +213,240 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
 
   const inputClasses = "w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500";
 
+  // Extract image preview from sketch data
+  const sketchPreviewUrl = useMemo(() => {
+    if (!formData.sketchData) return null;
+    try {
+      const parsed = JSON.parse(formData.sketchData);
+      return parsed.imagePreview || null;
+    } catch {
+      // If it's not valid JSON, it might be an old format or direct data URL
+      return formData.sketchData.startsWith('data:') ? formData.sketchData : null;
+    }
+  }, [formData.sketchData]);
+
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-2">
-      {/* Name, Duration, Category on single line */}
-      <div className="grid grid-cols-[1fr_auto_auto] gap-2">
-        <div>
-          <label htmlFor="name" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Drill Name
-          </label>
-          <input
-            id="name"
-            type="text"
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            placeholder="Enter drill name"
-            required
-            className={inputClasses}
-            style={inputStyle}
-          />
-        </div>
-        <div>
-          <label htmlFor="duration" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Duration
-          </label>
-          <select
-            id="duration"
-            value={formData.duration}
-            onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
-            className={inputClasses}
-            style={{ ...inputStyle, minWidth: '5rem' }}
-          >
-            {DRILL_DURATIONS.map(d => <option key={d} value={d}>{d}</option>)}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="category" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Category
-          </label>
-          <select
-            id="category"
-            value={formData.category}
-            onChange={(e) => setFormData({ ...formData, category: e.target.value as typeof formData.category })}
-            className={inputClasses}
-            style={{ ...inputStyle, minWidth: '6rem' }}
-          >
-            {DRILL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </div>
-      </div>
+      {/* Main layout: Form fields on left, Sketch preview on right */}
+      <div className="grid grid-cols-[1fr_280px] gap-4">
+        {/* Left column - Form fields */}
+        <div className="flex flex-col gap-2">
+          {/* Name, Duration, Category on single line */}
+          <div className="grid grid-cols-[1fr_auto_auto] gap-2">
+            <div>
+              <label htmlFor="name" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+                Drill Name
+              </label>
+              <input
+                id="name"
+                type="text"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                placeholder="Enter drill name"
+                required
+                className={inputClasses}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label htmlFor="duration" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+                Duration
+              </label>
+              <select
+                id="duration"
+                value={formData.duration}
+                onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
+                className={inputClasses}
+                style={{ ...inputStyle, minWidth: '5rem' }}
+              >
+                {DRILL_DURATIONS.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="category" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+                Category
+              </label>
+              <select
+                id="category"
+                value={formData.category}
+                onChange={(e) => setFormData({ ...formData, category: e.target.value as typeof formData.category })}
+                className={inputClasses}
+                style={{ ...inputStyle, minWidth: '6rem' }}
+              >
+                {DRILL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
 
-      {/* Two-column layout for text fields */}
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label htmlFor="description" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Description
-          </label>
-          <textarea
-            id="description"
-            value={formData.description}
-            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-            placeholder="Brief description of the drill"
-            rows={2}
-            className={`${inputClasses} resize-none`}
-            style={inputStyle}
+          {/* Two-column layout for text fields */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label htmlFor="description" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+                Description
+              </label>
+              <textarea
+                id="description"
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                placeholder="Brief description of the drill"
+                rows={2}
+                className={`${inputClasses} resize-none`}
+                style={inputStyle}
+              />
+            </div>
+
+            <div>
+              <label htmlFor="objective" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+                Objective
+              </label>
+              <textarea
+                id="objective"
+                value={formData.objective}
+                onChange={(e) => setFormData({ ...formData, objective: e.target.value })}
+                placeholder="What is the goal of this drill?"
+                rows={2}
+                className={`${inputClasses} resize-none`}
+                style={inputStyle}
+              />
+            </div>
+
+            <div>
+              <label htmlFor="setup" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+                Setup
+              </label>
+              <textarea
+                id="setup"
+                value={formData.setup}
+                onChange={(e) => setFormData({ ...formData, setup: e.target.value })}
+                placeholder="How to set up the drill"
+                rows={2}
+                className={`${inputClasses} resize-none`}
+                style={inputStyle}
+              />
+            </div>
+
+            <div>
+              <label htmlFor="execution" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+                Execution
+              </label>
+              <textarea
+                id="execution"
+                value={formData.execution}
+                onChange={(e) => setFormData({ ...formData, execution: e.target.value })}
+                placeholder="How to run the drill"
+                rows={2}
+                className={`${inputClasses} resize-none`}
+                style={inputStyle}
+              />
+            </div>
+
+            <div>
+              <label htmlFor="coachingPoints" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+                Coaching Points
+              </label>
+              <textarea
+                id="coachingPoints"
+                value={formData.coachingPoints}
+                onChange={(e) => setFormData({ ...formData, coachingPoints: e.target.value })}
+                placeholder="Key points for coaches"
+                rows={2}
+                className={`${inputClasses} resize-none`}
+                style={inputStyle}
+              />
+            </div>
+
+            <div>
+              <label htmlFor="variations" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+                Variations
+              </label>
+              <textarea
+                id="variations"
+                value={formData.variations}
+                onChange={(e) => setFormData({ ...formData, variations: e.target.value })}
+                placeholder="Alternative ways to run this drill"
+                rows={2}
+                className={`${inputClasses} resize-none`}
+                style={inputStyle}
+              />
+            </div>
+          </div>
+
+          <EquipmentPicker
+            label="Equipment"
+            value={formData.equipment}
+            onChange={(value) => setFormData({ ...formData, equipment: value })}
+            compact
+            hideSummary
           />
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label htmlFor="videoLink" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+                Video Link
+              </label>
+              <input
+                id="videoLink"
+                type="url"
+                value={formData.videoLink}
+                onChange={(e) => setFormData({ ...formData, videoLink: e.target.value })}
+                placeholder="https://youtube.com/..."
+                className={inputClasses}
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label htmlFor="pdfLink" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+                PDF Link
+              </label>
+              <input
+                id="pdfLink"
+                type="url"
+                value={formData.pdfLink}
+                onChange={(e) => setFormData({ ...formData, pdfLink: e.target.value })}
+                placeholder="https://example.com/drill.pdf"
+                className={inputClasses}
+                style={inputStyle}
+              />
+            </div>
+          </div>
         </div>
 
-        <div>
-          <label htmlFor="objective" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Objective
-          </label>
-          <textarea
-            id="objective"
-            value={formData.objective}
-            onChange={(e) => setFormData({ ...formData, objective: e.target.value })}
-            placeholder="What is the goal of this drill?"
-            rows={2}
-            className={`${inputClasses} resize-none`}
-            style={inputStyle}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="setup" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Setup
-          </label>
-          <textarea
-            id="setup"
-            value={formData.setup}
-            onChange={(e) => setFormData({ ...formData, setup: e.target.value })}
-            placeholder="How to set up the drill"
-            rows={2}
-            className={`${inputClasses} resize-none`}
-            style={inputStyle}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="execution" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Execution
-          </label>
-          <textarea
-            id="execution"
-            value={formData.execution}
-            onChange={(e) => setFormData({ ...formData, execution: e.target.value })}
-            placeholder="How to run the drill"
-            rows={2}
-            className={`${inputClasses} resize-none`}
-            style={inputStyle}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="coachingPoints" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Coaching Points
-          </label>
-          <textarea
-            id="coachingPoints"
-            value={formData.coachingPoints}
-            onChange={(e) => setFormData({ ...formData, coachingPoints: e.target.value })}
-            placeholder="Key points for coaches"
-            rows={2}
-            className={`${inputClasses} resize-none`}
-            style={inputStyle}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="variations" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Variations
-          </label>
-          <textarea
-            id="variations"
-            value={formData.variations}
-            onChange={(e) => setFormData({ ...formData, variations: e.target.value })}
-            placeholder="Alternative ways to run this drill"
-            rows={2}
-            className={`${inputClasses} resize-none`}
-            style={inputStyle}
-          />
-        </div>
-      </div>
-
-      <EquipmentPicker
-        label="Equipment"
-        value={formData.equipment}
-        onChange={(value) => setFormData({ ...formData, equipment: value })}
-        compact
-        hideSummary
-      />
-
-      <div className="grid grid-cols-2 gap-2">
-        <div>
-          <label htmlFor="videoLink" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Video Link
-          </label>
-          <input
-            id="videoLink"
-            type="url"
-            value={formData.videoLink}
-            onChange={(e) => setFormData({ ...formData, videoLink: e.target.value })}
-            placeholder="https://youtube.com/..."
-            className={inputClasses}
-            style={inputStyle}
-          />
-        </div>
-        <div>
-          <label htmlFor="pdfLink" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            PDF Link
-          </label>
-          <input
-            id="pdfLink"
-            type="url"
-            value={formData.pdfLink}
-            onChange={(e) => setFormData({ ...formData, pdfLink: e.target.value })}
-            placeholder="https://example.com/drill.pdf"
-            className={inputClasses}
-            style={inputStyle}
-          />
+        {/* Right column - Sketch preview */}
+        <div className="flex flex-col gap-2">
+          <div className="block font-medium text-gray-700 dark:text-gray-300" style={labelStyle}>
+            Drill Sketch
+          </div>
+          <div className="flex-1 flex flex-col rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 overflow-hidden">
+            {sketchPreviewUrl ? (
+              <div className="flex-1 p-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img 
+                  src={sketchPreviewUrl} 
+                  alt="Drill sketch preview" 
+                  className="w-full h-full object-contain rounded"
+                />
+              </div>
+            ) : (
+              <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
+                <div className="text-center p-4">
+                  <Pencil className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p>No sketch yet</p>
+                </div>
+              </div>
+            )}
+            <div className="p-2 border-t border-gray-200 dark:border-gray-700">
+              <Button
+                type="button"
+                variant={formData.sketchData ? 'secondary' : 'outline'}
+                onClick={() => setIsSketchModalOpen(true)}
+                className="w-full"
+                size="sm"
+              >
+                <Pencil className="w-4 h-4" />
+                {formData.sketchData ? 'Edit Sketch' : 'Create Sketch'}
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -398,15 +454,6 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
         <Button type="button" variant="outline" onClick={handleCancelClick}>
           <X className="w-4 h-4" />
           Cancel
-        </Button>
-        
-        <Button
-          type="button"
-          variant={formData.sketchData ? 'secondary' : 'outline'}
-          onClick={() => setIsSketchModalOpen(true)}
-        >
-          <Pencil className="w-4 h-4" />
-          {formData.sketchData ? 'Edit Sketch' : 'Sketch Drill'}
         </Button>
         
         {isCreatingNew ? (
