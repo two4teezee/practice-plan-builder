@@ -270,7 +270,7 @@ export default function DrillsPage() {
         <DrillForm
           drill={editingDrill}
           onSave={handleSave}
-          onSaveAsNew={editingDrill ? handleSaveAsNew : undefined}
+          onCreateNew={editingDrill ? handleSaveAsNew : undefined}
           onDelete={editingDrill ? handleDelete : undefined}
           onCancel={() => {
             setIsModalOpen(false);

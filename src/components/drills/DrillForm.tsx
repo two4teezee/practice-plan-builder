@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/Button';
 import { EquipmentPicker } from '@/components/ui/EquipmentPicker';
 import { DrillSketchModal } from '@/components/drills/DrillSketchModal';
+import { Modal } from '@/components/ui/Modal';
 import type { Drill, SkillFocus } from '@/lib/types';
 import { DRILL_CATEGORIES, SKILL_FOCUSES, DRILL_DURATIONS } from '@/lib/types';
-import { Save, X, Plus, Trash2, Pencil } from 'lucide-react';
+import { Save, X, Plus, Trash2, Pencil, AlertTriangle } from 'lucide-react';
 
 interface DrillFormProps {
   drill?: Drill | null;
@@ -69,8 +70,12 @@ const getStorageKey = (drillId: number | undefined, isCreatingNew: boolean): str
 
 export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCreatingNew = false }: DrillFormProps) {
   const [formData, setFormData] = useState<FormData>(getDefaultFormData());
+  const [originalFormData, setOriginalFormData] = useState<FormData | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [isSketchModalOpen, setIsSketchModalOpen] = useState(false);
+  const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Get form data from drill or defaults
   const getDrillFormData = useCallback((d: Drill): FormData => ({
@@ -93,6 +98,10 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
   // Load form data - check localStorage first, then fall back to drill data or defaults
   useEffect(() => {
     const storageKey = getStorageKey(drill?.id, isCreatingNew);
+    
+    // Store the original data for change detection
+    const originalData = drill ? getDrillFormData(drill) : getDefaultFormData();
+    setOriginalFormData(originalData);
     
     try {
       const saved = localStorage.getItem(storageKey);
@@ -120,6 +129,12 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
     setIsInitialized(true);
   }, [drill, isCreatingNew, getDrillFormData]);
 
+  // Check if form has unsaved changes compared to the original drill data
+  const hasChanges = useMemo(() => {
+    if (!originalFormData) return false;
+    return JSON.stringify(formData) !== JSON.stringify(originalFormData);
+  }, [formData, originalFormData]);
+
   // Save form data to localStorage when it changes
   useEffect(() => {
     if (!isInitialized) return;
@@ -134,6 +149,17 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // For existing drills, show confirmation modal
+    if (drill && !isCreatingNew) {
+      setShowUpdateConfirm(true);
+    } else {
+      // For new drills, save directly
+      onSave(formData);
+    }
+  };
+
+  const handleConfirmUpdate = () => {
+    setShowUpdateConfirm(false);
     onSave(formData);
   };
 
@@ -143,10 +169,42 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
     }
   };
 
-  const handleDelete = () => {
+  const handleDeleteClick = () => {
+    setShowDeleteConfirm(true);
+  };
+
+  const handleConfirmDelete = () => {
     if (drill && onDelete) {
+      // Clear localStorage for this form
+      const storageKey = getStorageKey(drill.id, isCreatingNew);
+      try {
+        localStorage.removeItem(storageKey);
+      } catch (error) {
+        console.error('Failed to clear form data:', error);
+      }
+      setShowDeleteConfirm(false);
       onDelete(drill);
     }
+  };
+
+  const handleCancelClick = () => {
+    if (hasChanges) {
+      setShowDiscardConfirm(true);
+    } else {
+      onCancel();
+    }
+  };
+
+  const handleConfirmDiscard = () => {
+    // Clear localStorage for this form
+    const storageKey = getStorageKey(drill?.id, isCreatingNew);
+    try {
+      localStorage.removeItem(storageKey);
+    } catch (error) {
+      console.error('Failed to clear form data:', error);
+    }
+    setShowDiscardConfirm(false);
+    onCancel();
   };
 
   const handleSketchSave = (sketchData: string) => {
@@ -204,94 +262,97 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
         </div>
       </div>
 
-      <div>
-        <label htmlFor="description" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-          Description
-        </label>
-        <textarea
-          id="description"
-          value={formData.description}
-          onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-          placeholder="Brief description of the drill"
-          rows={2}
-          className={`${inputClasses} resize-none`}
-          style={inputStyle}
-        />
-      </div>
+      {/* Two-column layout for text fields */}
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label htmlFor="description" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            Description
+          </label>
+          <textarea
+            id="description"
+            value={formData.description}
+            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+            placeholder="Brief description of the drill"
+            rows={2}
+            className={`${inputClasses} resize-none`}
+            style={inputStyle}
+          />
+        </div>
 
-      <div>
-        <label htmlFor="objective" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-          Objective
-        </label>
-        <textarea
-          id="objective"
-          value={formData.objective}
-          onChange={(e) => setFormData({ ...formData, objective: e.target.value })}
-          placeholder="What is the goal of this drill?"
-          rows={2}
-          className={`${inputClasses} resize-none`}
-          style={inputStyle}
-        />
-      </div>
+        <div>
+          <label htmlFor="objective" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            Objective
+          </label>
+          <textarea
+            id="objective"
+            value={formData.objective}
+            onChange={(e) => setFormData({ ...formData, objective: e.target.value })}
+            placeholder="What is the goal of this drill?"
+            rows={2}
+            className={`${inputClasses} resize-none`}
+            style={inputStyle}
+          />
+        </div>
 
-      <div>
-        <label htmlFor="setup" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-          Setup
-        </label>
-        <textarea
-          id="setup"
-          value={formData.setup}
-          onChange={(e) => setFormData({ ...formData, setup: e.target.value })}
-          placeholder="How to set up the drill"
-          rows={2}
-          className={`${inputClasses} resize-none`}
-          style={inputStyle}
-        />
-      </div>
+        <div>
+          <label htmlFor="setup" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            Setup
+          </label>
+          <textarea
+            id="setup"
+            value={formData.setup}
+            onChange={(e) => setFormData({ ...formData, setup: e.target.value })}
+            placeholder="How to set up the drill"
+            rows={2}
+            className={`${inputClasses} resize-none`}
+            style={inputStyle}
+          />
+        </div>
 
-      <div>
-        <label htmlFor="execution" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-          Execution
-        </label>
-        <textarea
-          id="execution"
-          value={formData.execution}
-          onChange={(e) => setFormData({ ...formData, execution: e.target.value })}
-          placeholder="How to run the drill"
-          rows={2}
-          className={`${inputClasses} resize-none`}
-          style={inputStyle}
-        />
-      </div>
+        <div>
+          <label htmlFor="execution" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            Execution
+          </label>
+          <textarea
+            id="execution"
+            value={formData.execution}
+            onChange={(e) => setFormData({ ...formData, execution: e.target.value })}
+            placeholder="How to run the drill"
+            rows={2}
+            className={`${inputClasses} resize-none`}
+            style={inputStyle}
+          />
+        </div>
 
-      <div>
-        <label htmlFor="coachingPoints" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-          Coaching Points
-        </label>
-        <textarea
-          id="coachingPoints"
-          value={formData.coachingPoints}
-          onChange={(e) => setFormData({ ...formData, coachingPoints: e.target.value })}
-          placeholder="Key points for coaches"
-          rows={2}
-          className={`${inputClasses} resize-none`}
-          style={inputStyle}
-        />
-      </div>
+        <div>
+          <label htmlFor="coachingPoints" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            Coaching Points
+          </label>
+          <textarea
+            id="coachingPoints"
+            value={formData.coachingPoints}
+            onChange={(e) => setFormData({ ...formData, coachingPoints: e.target.value })}
+            placeholder="Key points for coaches"
+            rows={2}
+            className={`${inputClasses} resize-none`}
+            style={inputStyle}
+          />
+        </div>
 
-      <div>
-        <label htmlFor="variations" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-          Variations
-        </label>
-        <textarea
-          id="variations"
-          value={formData.variations}
-          onChange={(e) => setFormData({ ...formData, variations: e.target.value })}
-          placeholder="Alternative ways to run this drill"
-          rows={2}
-          className={`${inputClasses} resize-none`}
-          style={inputStyle}
-        />
+        <div>
+          <label htmlFor="variations" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
+            Variations
+          </label>
+          <textarea
+            id="variations"
+            value={formData.variations}
+            onChange={(e) => setFormData({ ...formData, variations: e.target.value })}
+            placeholder="Alternative ways to run this drill"
+            rows={2}
+            className={`${inputClasses} resize-none`}
+            style={inputStyle}
+          />
+        </div>
       </div>
 
       <EquipmentPicker
@@ -334,7 +395,7 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
       </div>
 
       <div className="flex flex-wrap gap-2 pt-3 border-t border-gray-200 dark:border-gray-800 mt-1">
-        <Button type="button" variant="outline" onClick={onCancel}>
+        <Button type="button" variant="outline" onClick={handleCancelClick}>
           <X className="w-4 h-4" />
           Cancel
         </Button>
@@ -361,7 +422,7 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
               <Button 
                 type="button" 
                 variant="outline" 
-                onClick={handleDelete}
+                onClick={handleDeleteClick}
                 className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 border-red-300 dark:border-red-700"
               >
                 <Trash2 className="w-4 h-4" />
@@ -375,7 +436,11 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
                   Create as New
                 </Button>
               )}
-              <Button type="submit">
+              <Button 
+                type="submit" 
+                disabled={!hasChanges}
+                className={!hasChanges ? 'opacity-50 cursor-not-allowed' : ''}
+              >
                 <Save className="w-4 h-4" />
                 Update Drill
               </Button>
@@ -397,6 +462,113 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
         onSave={handleSketchSave}
         initialSketchData={formData.sketchData}
       />
+
+      {/* Update Confirmation Modal */}
+      <Modal
+        isOpen={showUpdateConfirm}
+        onClose={() => setShowUpdateConfirm(false)}
+        title="Confirm Update"
+        size="sm"
+      >
+        <div className="flex flex-col gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
+              <AlertTriangle className="w-5 h-5 text-primary-600 dark:text-primary-400" />
+            </div>
+            <div>
+              <p className="text-gray-700 dark:text-gray-300">
+                Are you sure you want to update this drill?
+              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                This will save all changes to <strong>{formData.name || 'this drill'}</strong>.
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setShowUpdateConfirm(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmUpdate}>
+              <Save className="w-4 h-4" />
+              Update Drill
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Discard Changes Confirmation Modal */}
+      <Modal
+        isOpen={showDiscardConfirm}
+        onClose={() => setShowDiscardConfirm(false)}
+        title="Discard Changes?"
+        size="sm"
+      >
+        <div className="flex flex-col gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+              <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+            </div>
+            <div>
+              <p className="text-gray-700 dark:text-gray-300">
+                You have unsaved changes.
+              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                Are you sure you want to discard your changes? This action cannot be undone.
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setShowDiscardConfirm(false)}>
+              Keep Editing
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={handleConfirmDiscard}
+              className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 border-red-300 dark:border-red-700"
+            >
+              <Trash2 className="w-4 h-4" />
+              Discard Changes
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Delete Drill Confirmation Modal */}
+      <Modal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        title="Delete Drill?"
+        size="sm"
+      >
+        <div className="flex flex-col gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+              <Trash2 className="w-5 h-5 text-red-600 dark:text-red-400" />
+            </div>
+            <div>
+              <p className="text-gray-700 dark:text-gray-300">
+                Are you sure you want to delete this drill?
+              </p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                <strong>{formData.name || 'This drill'}</strong> will be permanently deleted. This action cannot be undone.
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setShowDeleteConfirm(false)}>
+              Cancel
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={handleConfirmDelete}
+              className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 border-red-300 dark:border-red-700"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete Drill
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </form>
   );
 }

@@ -14,9 +14,10 @@ interface EquipmentPickerProps {
   onChange: (value: string) => void;
   label?: string;
   compact?: boolean;
+  hideSummary?: boolean;
 }
 
-export function EquipmentPicker({ value, onChange, label, compact = false }: EquipmentPickerProps) {
+export function EquipmentPicker({ value, onChange, label, compact = false, hideSummary = false }: EquipmentPickerProps) {
   const [selections, setSelections] = useState<Map<string, number>>(new Map());
 
   // Initialize from value string
@@ -126,7 +127,7 @@ export function EquipmentPicker({ value, onChange, label, compact = false }: Equ
       </div>
 
       {/* Summary */}
-      {selections.size > 0 && (
+      {!hideSummary && selections.size > 0 && (
         <div className={`${compact ? 'mt-2 p-1.5' : 'mt-3 p-2'} bg-gray-50 dark:bg-gray-800 rounded-lg`}>
           <p className={`${compact ? 'text-[10px]' : 'text-xs'} text-gray-500 dark:text-gray-400`}>
             <span className="font-medium">Selected: </span>
