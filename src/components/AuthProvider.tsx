@@ -1,12 +1,11 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useRef, type ReactNode } from 'react';
 import type { User, Session } from '@supabase/supabase-js';
 import {
   signIn as authSignIn,
   signUp as authSignUp,
   signOut as authSignOut,
-  getSession,
   getProfile,
   onAuthStateChange,
   type Profile,
@@ -44,42 +43,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const profileFetchInProgress = useRef(false);
 
-  // Fetch profile for current user
+  // Fetch profile for current user with timeout
   const fetchProfile = useCallback(async (userId: string) => {
-    const userProfile = await getProfile(userId);
-    setProfile(userProfile);
+    // Prevent duplicate fetches
+    if (profileFetchInProgress.current) {
+      return;
+    }
+    
+    profileFetchInProgress.current = true;
+    
+    try {
+      // Add a timeout to prevent hanging
+      const timeoutPromise = new Promise<null>((_, reject) => 
+        setTimeout(() => reject(new Error('Profile fetch timeout')), 5000)
+      );
+      
+      const profilePromise = getProfile(userId);
+      
+      const userProfile = await Promise.race([profilePromise, timeoutPromise]);
+      setProfile(userProfile);
+    } catch (error) {
+      console.error('Error fetching profile:', error);
+      setProfile(null);
+    } finally {
+      profileFetchInProgress.current = false;
+    }
   }, []);
 
   // Refresh profile (useful after approval)
   const refreshProfile = useCallback(async () => {
     if (user) {
+      profileFetchInProgress.current = false; // Allow refresh
       await fetchProfile(user.id);
     }
   }, [user, fetchProfile]);
 
-  // Initialize auth state
+  // Initialize auth state using onAuthStateChange only
+  // This avoids race conditions between getSession and the listener
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        const currentSession = await getSession();
-        setSession(currentSession);
-        setUser(currentSession?.user ?? null);
+    let mounted = true;
 
-        if (currentSession?.user) {
-          await fetchProfile(currentSession.user.id);
-        }
-      } catch (error) {
-        console.error('Error initializing auth:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    initAuth();
-
-    // Subscribe to auth changes
+    // Subscribe to auth changes - this handles initial session too
     const { unsubscribe } = onAuthStateChange(async (event, newSession) => {
+      if (!mounted) return;
+      
+      console.log('Auth event:', event);
+      
       setSession(newSession);
       setUser(newSession?.user ?? null);
 
@@ -89,16 +100,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(null);
       }
 
-      // Handle sign out
-      if (event === 'SIGNED_OUT') {
-        setProfile(null);
-      }
+      // Always set loading to false after processing any auth event
+      setIsLoading(false);
     });
 
+    // Fallback: if no auth event fires within 3 seconds, stop loading
+    const fallbackTimer = setTimeout(() => {
+      if (mounted && isLoading) {
+        console.log('Auth fallback: no event received, stopping loading');
+        setIsLoading(false);
+      }
+    }, 3000);
+
     return () => {
+      mounted = false;
+      clearTimeout(fallbackTimer);
       unsubscribe();
     };
-  }, [fetchProfile]);
+  }, [fetchProfile, isLoading]);
 
   // Sign in handler
   const handleSignIn = useCallback(async (email: string, password: string) => {
@@ -109,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     if (signedInUser) {
+      profileFetchInProgress.current = false; // Allow fresh fetch
       await fetchProfile(signedInUser.id);
     }
 
