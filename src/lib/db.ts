@@ -637,24 +637,15 @@ export const seedDrills: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>[] = [
   },
 ];
 
-// Initialize database with seed data if empty
+// Initialize database - no longer seeds automatically
+// Seed data is now added via SQL schema to bypass RLS
 export async function initializeDatabase(): Promise<void> {
   if (!isSupabaseConfigured()) {
     console.warn('Supabase not configured, skipping database initialization');
     return;
   }
   
-  try {
-    const count = await getDrillsCount();
-    if (count === 0) {
-      console.log('Seeding database with initial drills...');
-      for (const drill of seedDrills) {
-        await createDrill(drill);
-      }
-      console.log('Database seeded successfully!');
-    }
-  } catch (error) {
-    console.error('Error initializing database:', error);
-    throw error;
-  }
+  // Database initialization is now handled by the SQL schema
+  // Seeding via client would fail due to RLS requiring authenticated users
+  console.log('Database initialized');
 }
