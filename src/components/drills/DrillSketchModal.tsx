@@ -14,10 +14,10 @@ interface DrillSketchModalProps {
 
 type RinkView = 'full' | 'half';
 type LineColor = 'blue' | 'red' | 'black' | 'gray';
-type LineType = 'solid' | 'dashed' | 'squiggly';
+type LineType = 'solid' | 'dashed' | 'dotted' | 'squiggly';
 type DrawMode = 'freehand' | 'line' | 'curve' | 'polyline';
 type PlaceableType = 'player' | 'cone' | 'net' | 'smallNet';
-type PlayerColor = 'blue' | 'red';
+type PlayerColor = 'blue' | 'red' | 'gray';
 
 interface Point {
   x: number;
@@ -25,6 +25,7 @@ interface Point {
 }
 
 interface Stroke {
+  id: string;
   points: Point[];
   color: string;
   lineType: LineType;
@@ -90,8 +91,11 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
   // Selection state
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
   const [isDraggingObject, setIsDraggingObject] = useState(false);
+  const [isDraggingStroke, setIsDraggingStroke] = useState(false);
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
+  const [dragStartPoint, setDragStartPoint] = useState<Point | null>(null);
   
   // Canvas dimensions - maintain proper NHL aspect ratios
   // Full rink: 200 x 85 ft = 2.35:1 ratio
@@ -673,9 +677,30 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
   }, [drawSquigglyPath]);
 
   // Draw all strokes
-  const drawStrokes = useCallback((ctx: CanvasRenderingContext2D, strokesToDraw: Stroke[]) => {
+  const drawStrokes = useCallback((ctx: CanvasRenderingContext2D, strokesToDraw: Stroke[], selectedId: string | null) => {
     strokesToDraw.forEach(stroke => {
       if (stroke.points.length < 2) return;
+      
+      const isSelected = stroke.id === selectedId;
+      
+      // Draw selection highlight behind the stroke
+      if (isSelected) {
+        ctx.save();
+        ctx.strokeStyle = '#8B5CF6'; // Purple highlight
+        ctx.lineWidth = stroke.lineWidth + 6;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 0.4;
+        
+        ctx.beginPath();
+        ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+        for (let i = 1; i < stroke.points.length; i++) {
+          ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
       
       ctx.strokeStyle = stroke.color;
       ctx.lineWidth = stroke.lineWidth;
@@ -684,6 +709,8 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       
       if (stroke.lineType === 'dashed') {
         ctx.setLineDash([10, 5]);
+      } else if (stroke.lineType === 'dotted') {
+        ctx.setLineDash([2, 4]);
       } else {
         ctx.setLineDash([]);
       }
@@ -775,6 +802,47 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     });
   }, [drawSquigglyLine, drawSquigglyPath, getAverageEndDirection, drawArrowheadAtAngle]);
 
+  // Helper to calculate distance from point to line segment
+  const distanceToSegment = useCallback((point: Point, p1: Point, p2: Point): number => {
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const lengthSquared = dx * dx + dy * dy;
+    
+    if (lengthSquared === 0) {
+      // p1 and p2 are the same point
+      return Math.sqrt((point.x - p1.x) ** 2 + (point.y - p1.y) ** 2);
+    }
+    
+    // Project point onto line segment
+    let t = ((point.x - p1.x) * dx + (point.y - p1.y) * dy) / lengthSquared;
+    t = Math.max(0, Math.min(1, t));
+    
+    const projX = p1.x + t * dx;
+    const projY = p1.y + t * dy;
+    
+    return Math.sqrt((point.x - projX) ** 2 + (point.y - projY) ** 2);
+  }, []);
+
+  // Hit test for strokes - returns stroke id if point is near a stroke
+  const hitTestStroke = useCallback((point: Point, strokeList: Stroke[]): string | null => {
+    const hitThreshold = 8; // Pixels tolerance for hit detection
+    
+    // Check in reverse order (top strokes first)
+    for (let i = strokeList.length - 1; i >= 0; i--) {
+      const stroke = strokeList[i];
+      if (stroke.points.length < 2) continue;
+      
+      // Check distance to each segment
+      for (let j = 0; j < stroke.points.length - 1; j++) {
+        const dist = distanceToSegment(point, stroke.points[j], stroke.points[j + 1]);
+        if (dist <= hitThreshold) {
+          return stroke.id;
+        }
+      }
+    }
+    return null;
+  }, [distanceToSegment]);
+
   // Hit test for placed objects - returns object id if point is inside
   const hitTestObject = useCallback((point: Point, objects: PlacedObject[]): string | null => {
     // Check in reverse order (top objects first)
@@ -832,7 +900,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       if (obj.type === 'player') {
         // Draw numbered player circle (matching selection bar size ~14px radius)
         const radius = 12;
-        const color = obj.playerColor === 'red' ? '#DC2626' : '#2563EB';
+        const color = obj.playerColor === 'red' ? '#DC2626' : obj.playerColor === 'gray' ? '#6B7280' : '#2563EB';
         
         // Circle fill
         ctx.beginPath();
@@ -841,16 +909,16 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         ctx.fill();
         
         // Circle border
-        ctx.strokeStyle = obj.playerColor === 'red' ? '#991B1B' : '#1D4ED8';
+        ctx.strokeStyle = obj.playerColor === 'red' ? '#991B1B' : obj.playerColor === 'gray' ? '#4B5563' : '#1D4ED8';
         ctx.lineWidth = 1.5;
         ctx.stroke();
         
-        // Number text
+        // Number or 'C' text
         ctx.fillStyle = '#FFFFFF';
         ctx.font = 'bold 11px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(String(obj.playerNumber || 1), obj.x, obj.y);
+        ctx.fillText(obj.playerNumber === 0 ? 'C' : String(obj.playerNumber || 1), obj.x, obj.y);
         
       } else if (obj.type === 'cone') {
         // Draw traffic cone
@@ -953,7 +1021,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     if (!ctx) return;
     
     drawRink(ctx, canvasWidth, canvasHeight, rinkView);
-    drawStrokes(ctx, strokes);
+    drawStrokes(ctx, strokes, selectedStrokeId);
     drawPlacedObjects(ctx, placedObjects, selectedObjectId);
     
     // Draw current stroke preview
@@ -965,6 +1033,8 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       
       if (lineType === 'dashed') {
         ctx.setLineDash([10, 5]);
+      } else if (lineType === 'dotted') {
+        ctx.setLineDash([2, 4]);
       } else {
         ctx.setLineDash([]);
       }
@@ -1073,7 +1143,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         ctx.fill();
       });
     }
-  }, [canvasWidth, canvasHeight, rinkView, strokes, currentStroke, lineColor, lineType, drawMode, lineStartPoint, curvePoints, polylinePoints, placedObjects, selectedObjectId, drawRink, drawStrokes, drawPlacedObjects, drawSquigglyLine, drawSquigglyPath, getAverageEndDirection, drawArrowheadAtAngle]);
+  }, [canvasWidth, canvasHeight, rinkView, strokes, currentStroke, lineColor, lineType, drawMode, lineStartPoint, curvePoints, polylinePoints, placedObjects, selectedObjectId, selectedStrokeId, drawRink, drawStrokes, drawPlacedObjects, drawSquigglyLine, drawSquigglyPath, getAverageEndDirection, drawArrowheadAtAngle]);
 
   // Redraw when dependencies change
   useEffect(() => {
@@ -1081,6 +1151,35 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       redrawCanvas();
     }
   }, [isOpen, redrawCanvas]);
+
+  // Keyboard event handler for delete/backspace
+  useEffect(() => {
+    if (!isOpen) return;
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        if (selectedObjectId || selectedStrokeId) {
+          e.preventDefault();
+          if (selectedObjectId) {
+            setPlacedObjects(prev => prev.filter(obj => obj.id !== selectedObjectId));
+            setSelectedObjectId(null);
+          }
+          if (selectedStrokeId) {
+            setStrokes(prev => prev.filter(s => s.id !== selectedStrokeId));
+            setSelectedStrokeId(null);
+          }
+        }
+      }
+      // Escape to deselect
+      if (e.key === 'Escape') {
+        setSelectedObjectId(null);
+        setSelectedStrokeId(null);
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, selectedObjectId, selectedStrokeId]);
 
   // Get canvas coordinates from mouse/touch event
   const getCanvasCoords = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>): Point | null => {
@@ -1110,10 +1209,27 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     const point = getCanvasCoords(e);
     if (!point) return;
     
-    // Handle select mode - click to select objects
-    if (isSelectMode && !isDraggingObject) {
-      const hitId = hitTestObject(point, placedObjects);
-      setSelectedObjectId(hitId);
+    // Handle select mode - click to select objects or strokes
+    if (isSelectMode && !isDraggingObject && !isDraggingStroke) {
+      // First check objects (they're drawn on top)
+      const hitObjectId = hitTestObject(point, placedObjects);
+      if (hitObjectId) {
+        setSelectedObjectId(hitObjectId);
+        setSelectedStrokeId(null);
+        return;
+      }
+      
+      // Then check strokes
+      const hitStrokeId = hitTestStroke(point, strokes);
+      if (hitStrokeId) {
+        setSelectedStrokeId(hitStrokeId);
+        setSelectedObjectId(null);
+        return;
+      }
+      
+      // Clicked on empty space - deselect
+      setSelectedObjectId(null);
+      setSelectedStrokeId(null);
       return;
     }
     
@@ -1131,8 +1247,8 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       };
       setPlacedObjects(prev => [...prev, newObject]);
       
-      // Auto-increment player number after placing (1->2->3->4->5->1)
-      if (placeableType === 'player' && playerNumber < 5) {
+      // Auto-increment player number after placing (1->2->3->4->5), skip for coach (C)
+      if (placeableType === 'player' && playerNumber > 0 && playerNumber < 5) {
         setPlayerNumber(playerNumber + 1);
       }
       return;
@@ -1144,6 +1260,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         setLineStartPoint(point);
       } else {
         const newStroke: Stroke = {
+          id: `stroke-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           points: [lineStartPoint, point],
           color: COLOR_MAP[lineColor],
           lineType,
@@ -1160,6 +1277,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         setCurvePoints(prev => [...prev, point]);
       } else {
         const newStroke: Stroke = {
+          id: `stroke-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
           points: [...curvePoints, point],
           color: COLOR_MAP[lineColor],
           lineType,
@@ -1180,6 +1298,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     if (drawMode === 'polyline' && polylinePoints.length >= 2) {
       // Finish polyline on double-click
       const newStroke: Stroke = {
+        id: `stroke-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         points: polylinePoints,
         color: COLOR_MAP[lineColor],
         lineType,
@@ -1196,19 +1315,34 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     const point = getCanvasCoords(e);
     if (!point) return;
     
-    // Handle select mode - start dragging if clicking on an object
+    // Handle select mode - start dragging if clicking on an object or stroke
     if (isSelectMode) {
-      const hitId = hitTestObject(point, placedObjects);
-      if (hitId) {
-        const obj = placedObjects.find(o => o.id === hitId);
+      // First check objects (they're drawn on top)
+      const hitObjectId = hitTestObject(point, placedObjects);
+      if (hitObjectId) {
+        const obj = placedObjects.find(o => o.id === hitObjectId);
         if (obj) {
-          setSelectedObjectId(hitId);
+          setSelectedObjectId(hitObjectId);
+          setSelectedStrokeId(null);
           setIsDraggingObject(true);
           setDragOffset({ x: point.x - obj.x, y: point.y - obj.y });
         }
-      } else {
-        setSelectedObjectId(null);
+        return;
       }
+      
+      // Then check strokes
+      const hitStrokeId = hitTestStroke(point, strokes);
+      if (hitStrokeId) {
+        setSelectedStrokeId(hitStrokeId);
+        setSelectedObjectId(null);
+        setIsDraggingStroke(true);
+        setDragStartPoint(point);
+        return;
+      }
+      
+      // Clicked on empty space - deselect
+      setSelectedObjectId(null);
+      setSelectedStrokeId(null);
       return;
     }
     
@@ -1222,13 +1356,26 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     const point = getCanvasCoords(e);
     if (!point) return;
     
-    // Handle dragging in select mode
+    // Handle dragging object in select mode
     if (isSelectMode && isDraggingObject && selectedObjectId) {
       setPlacedObjects(prev => prev.map(obj => 
         obj.id === selectedObjectId 
           ? { ...obj, x: point.x - dragOffset.x, y: point.y - dragOffset.y }
           : obj
       ));
+      return;
+    }
+    
+    // Handle dragging stroke in select mode
+    if (isSelectMode && isDraggingStroke && selectedStrokeId && dragStartPoint) {
+      const dx = point.x - dragStartPoint.x;
+      const dy = point.y - dragStartPoint.y;
+      setStrokes(prev => prev.map(stroke => 
+        stroke.id === selectedStrokeId 
+          ? { ...stroke, points: stroke.points.map(p => ({ x: p.x + dx, y: p.y + dy })) }
+          : stroke
+      ));
+      setDragStartPoint(point);
       return;
     }
     
@@ -1255,8 +1402,16 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     
     if (drawMode !== 'freehand') return;
     
+    // Handle end of stroke drag in select mode
+    if (isSelectMode && isDraggingStroke) {
+      setIsDraggingStroke(false);
+      setDragStartPoint(null);
+      return;
+    }
+    
     if (isDrawing && currentStroke.length > 1) {
       const newStroke: Stroke = {
+        id: `stroke-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         points: currentStroke,
         color: COLOR_MAP[lineColor],
         lineType,
@@ -1269,11 +1424,15 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     setCurrentStroke([]);
   };
 
-  // Delete selected object
+  // Delete selected item (object or stroke)
   const handleDeleteSelected = () => {
     if (selectedObjectId) {
       setPlacedObjects(prev => prev.filter(obj => obj.id !== selectedObjectId));
       setSelectedObjectId(null);
+    }
+    if (selectedStrokeId) {
+      setStrokes(prev => prev.filter(s => s.id !== selectedStrokeId));
+      setSelectedStrokeId(null);
     }
   };
 
@@ -1289,6 +1448,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           setLineStartPoint(point);
         } else {
           const newStroke: Stroke = {
+            id: `stroke-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             points: [lineStartPoint, point],
             color: COLOR_MAP[lineColor],
             lineType,
@@ -1303,6 +1463,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           setCurvePoints(prev => [...prev, point]);
         } else {
           const newStroke: Stroke = {
+            id: `stroke-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             points: [...curvePoints, point],
             color: COLOR_MAP[lineColor],
             lineType,
@@ -1347,6 +1508,8 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     setCurvePoints([]);
     setPolylinePoints([]);
     setPlacedObjects([]);
+    setSelectedObjectId(null);
+    setSelectedStrokeId(null);
   };
 
   const handleSave = () => {
@@ -1385,6 +1548,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
   const lineTypeButtons: { type: LineType; label: string }[] = [
     { type: 'solid', label: 'Solid' },
     { type: 'dashed', label: 'Dashed' },
+    { type: 'dotted', label: 'Dotted' },
     { type: 'squiggly', label: 'Squiggly' },
   ];
 
@@ -1397,154 +1561,143 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
 
   return (
     <Modal isOpen={isOpen} onClose={handleCancel} title="Sketch Drill" size="xl">
-      <div className="flex flex-col gap-4">
-        {/* Toolbar */}
-        <div className="flex flex-wrap items-center gap-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-          {/* Rink View Toggle */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-gray-600 dark:text-gray-400">View:</span>
+      <div className="flex gap-3">
+        {/* Vertical Toolbar - Left Side (2 columns) */}
+        <div className="flex flex-col gap-2 p-2 bg-gray-50 dark:bg-gray-800 rounded-lg shrink-0">
+          {/* Top Row: Rink View + Select */}
+          <div className="grid grid-cols-2 gap-1">
             <Button
               type="button"
               size="sm"
               variant={rinkView === 'half' ? 'primary' : 'outline'}
               onClick={toggleRinkView}
+              title={rinkView === 'full' ? 'Switch to Half Rink' : 'Switch to Full Rink'}
+              className="w-8 h-8 p-0 flex items-center justify-center"
             >
-              {rinkView === 'full' ? <Minimize2 className="w-4 h-4 mr-1" /> : <Maximize2 className="w-4 h-4 mr-1" />}
-              {rinkView === 'full' ? 'Full Rink' : 'Half Rink'}
+              {rinkView === 'full' ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </Button>
+            <button
+              type="button"
+              title="Select & Move"
+              onClick={() => {
+                setIsSelectMode(true);
+                setIsPlaceMode(false);
+                setLineStartPoint(null);
+                setCurvePoints([]);
+                setPolylinePoints([]);
+                setCurrentStroke([]);
+              }}
+              className={`
+                w-8 h-8 flex items-center justify-center rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
+                ${isSelectMode
+                  ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500 text-primary-700 dark:text-primary-300'
+                  : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
+              `}
+            >
+              <MousePointer2 className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Divider */}
-          <div className="w-px h-6 bg-gray-300 dark:bg-gray-600" />
+          <div className="h-px w-full bg-gray-300 dark:bg-gray-600" />
 
-          {/* Color Selection */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Color:</span>
-            <div className="flex gap-1">
-              {colorButtons.map(({ color, label }) => (
-                <button
-                  key={color}
-                  type="button"
-                  onClick={() => setLineColor(color)}
-                  className={`
-                    w-7 h-7 rounded-full border-2 transition-all
-                    ${lineColor === color ? 'ring-2 ring-offset-2 ring-primary-500 dark:ring-offset-gray-800' : ''}
-                  `}
-                  style={{ backgroundColor: COLOR_MAP[color], borderColor: color === 'black' ? '#374151' : COLOR_MAP[color] }}
-                  title={label}
-                  aria-label={label}
-                />
-              ))}
-            </div>
+          {/* Draw Mode Selection - 2x2 grid */}
+          <div className="grid grid-cols-2 gap-1">
+            {drawModeButtons.map(({ mode, label, icon }) => (
+              <button
+                key={mode}
+                type="button"
+                title={label}
+                onClick={() => {
+                  setDrawMode(mode);
+                  setIsPlaceMode(false);
+                  setIsSelectMode(false);
+                  setSelectedObjectId(null);
+                  setSelectedStrokeId(null);
+                  setLineStartPoint(null);
+                  setCurvePoints([]);
+                  setPolylinePoints([]);
+                  setCurrentStroke([]);
+                }}
+                className={`
+                  w-8 h-8 flex items-center justify-center rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
+                  ${!isPlaceMode && !isSelectMode && drawMode === mode 
+                    ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500 text-primary-700 dark:text-primary-300' 
+                    : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
+                `}
+              >
+                {icon}
+              </button>
+            ))}
           </div>
 
           {/* Divider */}
-          <div className="w-px h-6 bg-gray-300 dark:bg-gray-600" />
+          <div className="h-px w-full bg-gray-300 dark:bg-gray-600" />
 
-          {/* Line Type Selection */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Style:</span>
-            <div className="flex gap-1">
-              {lineTypeButtons.map(({ type, label }) => (
-                <button
-                  key={type}
-                  type="button"
-                  title={label}
-                  onClick={() => setLineType(type)}
-                  className={`
-                    p-1.5 rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
-                    ${lineType === type 
-                      ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500 text-primary-700 dark:text-primary-300' 
-                      : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
-                  `}
-                >
-                  {type === 'solid' ? (
-                    <svg className="w-6 h-4" viewBox="0 0 24 6" aria-hidden="true">
-                      <line x1="0" y1="3" x2="24" y2="3" stroke="currentColor" strokeWidth="3" />
-                    </svg>
-                  ) : type === 'dashed' ? (
-                    <svg className="w-6 h-4" viewBox="0 0 24 6" aria-hidden="true">
-                      <line x1="0" y1="3" x2="24" y2="3" stroke="currentColor" strokeWidth="3" strokeDasharray="5 3" />
-                    </svg>
-                  ) : (
-                    <svg className="w-6 h-4" viewBox="0 0 24 6" aria-hidden="true">
-                      <path d="M0,3 Q3,0 6,3 Q9,6 12,3 Q15,0 18,3 Q21,6 24,3" fill="none" stroke="currentColor" strokeWidth="2.5" />
-                    </svg>
-                  )}
-                </button>
-              ))}
-            </div>
+          {/* Line Type Selection - 2 columns (3rd wraps) */}
+          <div className="grid grid-cols-2 gap-1">
+            {lineTypeButtons.map(({ type, label }) => (
+              <button
+                key={type}
+                type="button"
+                title={label}
+                onClick={() => setLineType(type)}
+                className={`
+                  w-8 h-8 flex items-center justify-center rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
+                  ${lineType === type 
+                    ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500 text-primary-700 dark:text-primary-300' 
+                    : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
+                `}
+              >
+                {type === 'solid' ? (
+                  <svg className="w-5 h-3" viewBox="0 0 24 6" aria-hidden="true">
+                    <line x1="0" y1="3" x2="24" y2="3" stroke="currentColor" strokeWidth="3" />
+                  </svg>
+                ) : type === 'dashed' ? (
+                  <svg className="w-5 h-3" viewBox="0 0 24 6" aria-hidden="true">
+                    <line x1="0" y1="3" x2="24" y2="3" stroke="currentColor" strokeWidth="3" strokeDasharray="5 3" />
+                  </svg>
+                ) : type === 'dotted' ? (
+                  <svg className="w-5 h-3" viewBox="0 0 24 6" aria-hidden="true">
+                    <line x1="0" y1="3" x2="24" y2="3" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="0.1 5" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-3" viewBox="0 0 24 6" aria-hidden="true">
+                    <path d="M0,3 Q3,0 6,3 Q9,6 12,3 Q15,0 18,3 Q21,6 24,3" fill="none" stroke="currentColor" strokeWidth="2.5" />
+                  </svg>
+                )}
+              </button>
+            ))}
           </div>
 
           {/* Divider */}
-          <div className="w-px h-6 bg-gray-300 dark:bg-gray-600" />
+          <div className="h-px w-full bg-gray-300 dark:bg-gray-600" />
 
-          {/* Select Tool */}
-          <button
-            type="button"
-            title="Select & Move"
-            onClick={() => {
-              setIsSelectMode(true);
-              setIsPlaceMode(false);
-              setLineStartPoint(null);
-              setCurvePoints([]);
-              setPolylinePoints([]);
-              setCurrentStroke([]);
-            }}
-            className={`
-              p-1.5 rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
-              ${isSelectMode
-                ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500 text-primary-700 dark:text-primary-300'
-                : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
-            `}
-          >
-            <MousePointer2 className="w-4 h-4" />
-          </button>
+          {/* Color Selection - 2x2 grid */}
+          <div className="grid grid-cols-2 gap-1">
+            {colorButtons.map(({ color, label }) => (
+              <button
+                key={color}
+                type="button"
+                onClick={() => setLineColor(color)}
+                className={`
+                  w-6 h-6 rounded-full border-2 transition-all mx-auto
+                  ${lineColor === color ? 'ring-2 ring-offset-1 ring-primary-500 dark:ring-offset-gray-800' : ''}
+                `}
+                style={{ backgroundColor: COLOR_MAP[color], borderColor: color === 'black' ? '#374151' : COLOR_MAP[color] }}
+                title={label}
+                aria-label={label}
+              />
+            ))}
+          </div>
 
           {/* Divider */}
-          <div className="w-px h-6 bg-gray-300 dark:bg-gray-600" />
+          <div className="h-px w-full bg-gray-300 dark:bg-gray-600" />
 
-          {/* Draw Mode Selection */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Draw:</span>
-            <div className="flex gap-1">
-              {drawModeButtons.map(({ mode, label, icon }) => (
-                <button
-                  key={mode}
-                  type="button"
-                  title={label}
-                  onClick={() => {
-                    setDrawMode(mode);
-                    setIsPlaceMode(false);
-                    setIsSelectMode(false);
-                    setSelectedObjectId(null);
-                    setLineStartPoint(null);
-                    setCurvePoints([]);
-                    setPolylinePoints([]);
-                    setCurrentStroke([]);
-                  }}
-                  className={`
-                    p-1.5 rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
-                    ${!isPlaceMode && !isSelectMode && drawMode === mode 
-                      ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500 text-primary-700 dark:text-primary-300' 
-                      : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
-                  `}
-                >
-                  {icon}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Objects Toolbar */}
-        <div className="flex flex-wrap items-center gap-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-          <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Place:</span>
-          
-          {/* Player circles */}
-          <div className="flex items-center gap-2">
-            <div className="flex gap-1">
-              {/* Blue players 1-5 */}
+          {/* Players - Blue and Red side by side */}
+          <div className="grid grid-cols-2 gap-1">
+            {/* Blue Players column */}
+            <div className="flex flex-col gap-0.5 items-center">
               {[1, 2, 3, 4, 5].map(num => (
                 <button
                   key={`blue-${num}`}
@@ -1554,14 +1707,15 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                     setIsPlaceMode(true);
                     setIsSelectMode(false);
                     setSelectedObjectId(null);
+                    setSelectedStrokeId(null);
                     setPlaceableType('player');
                     setPlayerNumber(num);
                     setPlayerColor('blue');
                   }}
                   className={`
-                    w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold transition-all
+                    w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold transition-all
                     ${isPlaceMode && placeableType === 'player' && playerNumber === num && playerColor === 'blue'
-                      ? 'ring-2 ring-offset-2 ring-primary-500 dark:ring-offset-gray-800'
+                      ? 'ring-2 ring-offset-1 ring-primary-500 dark:ring-offset-gray-800'
                       : ''}
                   `}
                   style={{ backgroundColor: '#2563EB' }}
@@ -1570,8 +1724,8 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                 </button>
               ))}
             </div>
-            <div className="flex gap-1">
-              {/* Red players 1-5 */}
+            {/* Red Players column */}
+            <div className="flex flex-col gap-0.5 items-center">
               {[1, 2, 3, 4, 5].map(num => (
                 <button
                   key={`red-${num}`}
@@ -1581,14 +1735,15 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                     setIsPlaceMode(true);
                     setIsSelectMode(false);
                     setSelectedObjectId(null);
+                    setSelectedStrokeId(null);
                     setPlaceableType('player');
                     setPlayerNumber(num);
                     setPlayerColor('red');
                   }}
                   className={`
-                    w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold transition-all
+                    w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold transition-all
                     ${isPlaceMode && placeableType === 'player' && playerNumber === num && playerColor === 'red'
-                      ? 'ring-2 ring-offset-2 ring-primary-500 dark:ring-offset-gray-800'
+                      ? 'ring-2 ring-offset-1 ring-primary-500 dark:ring-offset-gray-800'
                       : ''}
                   `}
                   style={{ backgroundColor: '#DC2626' }}
@@ -1599,166 +1754,193 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
             </div>
           </div>
 
-          {/* Divider */}
-          <div className="w-px h-6 bg-gray-300 dark:bg-gray-600" />
-
-          {/* Cone */}
-          <button
-            type="button"
-            title="Cone"
-            onClick={() => {
-              setIsPlaceMode(true);
-              setIsSelectMode(false);
-              setSelectedObjectId(null);
-              setPlaceableType('cone');
-            }}
-            className={`
-              p-1.5 rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
-              ${isPlaceMode && placeableType === 'cone'
-                ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500'
-                : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
-            `}
-          >
-            <svg className="w-5 h-6" viewBox="0 0 24 28" fill="none" aria-hidden="true">
-              {/* Traffic cone - tapered trapezoid shape */}
-              <path d="M9 2L15 2L19 22L5 22Z" fill="#F97316" stroke="#C2410C" strokeWidth="1.5" />
-              {/* White stripes */}
-              <path d="M6.5 17L17.5 17" stroke="white" strokeWidth="2.5" />
-              <path d="M8 9L16 9" stroke="white" strokeWidth="2" />
-              {/* Base */}
-              <rect x="3" y="22" width="18" height="4" fill="#1F2937" rx="1" />
-            </svg>
-          </button>
-
-          {/* Net */}
-          <button
-            type="button"
-            title="Net"
-            onClick={() => {
-              setIsPlaceMode(true);
-              setIsSelectMode(false);
-              setSelectedObjectId(null);
-              setPlaceableType('net');
-            }}
-            className={`
-              p-1.5 rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
-              ${isPlaceMode && placeableType === 'net'
-                ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500'
-                : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
-            `}
-          >
-            <svg className="w-6 h-5" viewBox="0 0 28 22" fill="none" aria-hidden="true">
-              <rect x="2" y="2" width="24" height="18" stroke="#DC2626" strokeWidth="3" fill="none" />
-              <line x1="8" y1="2" x2="8" y2="20" stroke="#9CA3AF" strokeWidth="1" />
-              <line x1="14" y1="2" x2="14" y2="20" stroke="#9CA3AF" strokeWidth="1" />
-              <line x1="20" y1="2" x2="20" y2="20" stroke="#9CA3AF" strokeWidth="1" />
-              <line x1="2" y1="8" x2="26" y2="8" stroke="#9CA3AF" strokeWidth="1" />
-              <line x1="2" y1="14" x2="26" y2="14" stroke="#9CA3AF" strokeWidth="1" />
-            </svg>
-          </button>
-
-          {/* Small Net */}
-          <button
-            type="button"
-            title="Small Net"
-            onClick={() => {
-              setIsPlaceMode(true);
-              setIsSelectMode(false);
-              setSelectedObjectId(null);
-              setPlaceableType('smallNet');
-            }}
-            className={`
-              p-1.5 rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
-              ${isPlaceMode && placeableType === 'smallNet'
-                ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500'
-                : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
-            `}
-          >
-            <svg className="w-5 h-4" viewBox="0 0 20 16" fill="none" aria-hidden="true">
-              <rect x="2" y="2" width="16" height="12" stroke="#3B82F6" strokeWidth="2" fill="none" />
-              <line x1="10" y1="2" x2="10" y2="14" stroke="#9CA3AF" strokeWidth="1" />
-              <line x1="2" y1="8" x2="18" y2="8" stroke="#9CA3AF" strokeWidth="1" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Canvas */}
-        <div className="flex justify-center bg-gray-100 dark:bg-gray-900 rounded-lg p-4 overflow-auto">
-          <canvas
-            ref={canvasRef}
-            width={canvasWidth}
-            height={canvasHeight}
-            className="border border-gray-300 dark:border-gray-600 rounded cursor-crosshair bg-white touch-none"
-            style={{ maxWidth: '100%', height: 'auto' }}
-            onClick={handleCanvasClick}
-            onDoubleClick={handleCanvasDoubleClick}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-          />
-        </div>
-
-        {/* Action Buttons with Mode Instructions */}
-        <div className="flex justify-between items-center gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-          <Button type="button" variant="outline" onClick={handleClear}>
-            <Eraser className="w-4 h-4" />
-            Clear
-          </Button>
-          
-          {/* Mode instructions - centered */}
-          <div className="flex-1 text-xs text-center text-gray-500 dark:text-gray-400">
-            {isSelectMode ? (
-              selectedObjectId 
-                ? 'Drag to move, or click Delete' 
-                : 'Click an object to select it'
-            ) : isPlaceMode ? (
-              placeableType === 'player' 
-                ? `Click to place ${playerColor} player ${playerNumber}`
-                : placeableType === 'cone'
-                  ? 'Click to place cone'
-                  : placeableType === 'net'
-                    ? 'Click to place net'
-                    : 'Click to place small net'
-            ) : drawMode === 'freehand' ? (
-              'Click and drag to draw'
-            ) : drawMode === 'line' ? (
-              lineStartPoint 
-                ? 'Click to set the end point' 
-                : 'Click to set the start point'
-            ) : drawMode === 'curve' ? (
-              curvePoints.length === 0 
-                ? 'Click to set the start point' 
-                : curvePoints.length === 1 
-                  ? 'Click to set the control point' 
-                  : 'Click to set the end point'
-            ) : drawMode === 'polyline' ? (
-              polylinePoints.length === 0 
-                ? 'Click to add points, double-click to finish' 
-                : `${polylinePoints.length} point(s) - double-click to finish`
-            ) : null}
+          {/* Coach - centered */}
+          <div className="flex justify-center">
+            <button
+              type="button"
+              title="Coach"
+              onClick={() => {
+                setIsPlaceMode(true);
+                setIsSelectMode(false);
+                setSelectedObjectId(null);
+                setSelectedStrokeId(null);
+                setPlaceableType('player');
+                setPlayerNumber(0);
+                setPlayerColor('gray');
+              }}
+              className={`
+                w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold transition-all
+                ${isPlaceMode && placeableType === 'player' && playerNumber === 0 && playerColor === 'gray'
+                  ? 'ring-2 ring-offset-1 ring-primary-500 dark:ring-offset-gray-800'
+                  : ''}
+              `}
+              style={{ backgroundColor: '#6B7280' }}
+            >
+              C
+            </button>
           </div>
-          
-          {/* Delete button - only shown when object is selected */}
-          {isSelectMode && selectedObjectId && (
-            <Button type="button" variant="outline" onClick={handleDeleteSelected} className="text-red-600 border-red-300 hover:bg-red-50 dark:text-red-400 dark:border-red-800 dark:hover:bg-red-900/20">
-              <Trash2 className="w-4 h-4" />
-              Delete
+
+          {/* Divider */}
+          <div className="h-px w-full bg-gray-300 dark:bg-gray-600" />
+
+          {/* Equipment - 2 columns */}
+          <div className="grid grid-cols-2 gap-1">
+            <button
+              type="button"
+              title="Cone"
+              onClick={() => {
+                setIsPlaceMode(true);
+                setIsSelectMode(false);
+                setSelectedObjectId(null);
+                setSelectedStrokeId(null);
+                setPlaceableType('cone');
+              }}
+              className={`
+                w-8 h-8 flex items-center justify-center rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
+                ${isPlaceMode && placeableType === 'cone'
+                  ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500'
+                  : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
+              `}
+            >
+              <svg className="w-4 h-5" viewBox="0 0 24 28" fill="none" aria-hidden="true">
+                <path d="M9 2L15 2L19 22L5 22Z" fill="#F97316" stroke="#C2410C" strokeWidth="1.5" />
+                <path d="M6.5 17L17.5 17" stroke="white" strokeWidth="2.5" />
+                <path d="M8 9L16 9" stroke="white" strokeWidth="2" />
+                <rect x="3" y="22" width="18" height="4" fill="#1F2937" rx="1" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              title="Net"
+              onClick={() => {
+                setIsPlaceMode(true);
+                setIsSelectMode(false);
+                setSelectedObjectId(null);
+                setSelectedStrokeId(null);
+                setPlaceableType('net');
+              }}
+              className={`
+                w-8 h-8 flex items-center justify-center rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
+                ${isPlaceMode && placeableType === 'net'
+                  ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500'
+                  : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
+              `}
+            >
+              <svg className="w-5 h-4" viewBox="0 0 28 22" fill="none" aria-hidden="true">
+                <rect x="2" y="2" width="24" height="18" stroke="#DC2626" strokeWidth="3" fill="none" />
+                <line x1="8" y1="2" x2="8" y2="20" stroke="#9CA3AF" strokeWidth="1" />
+                <line x1="14" y1="2" x2="14" y2="20" stroke="#9CA3AF" strokeWidth="1" />
+                <line x1="20" y1="2" x2="20" y2="20" stroke="#9CA3AF" strokeWidth="1" />
+                <line x1="2" y1="8" x2="26" y2="8" stroke="#9CA3AF" strokeWidth="1" />
+                <line x1="2" y1="14" x2="26" y2="14" stroke="#9CA3AF" strokeWidth="1" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              title="Small Net"
+              onClick={() => {
+                setIsPlaceMode(true);
+                setIsSelectMode(false);
+                setSelectedObjectId(null);
+                setSelectedStrokeId(null);
+                setPlaceableType('smallNet');
+              }}
+              className={`
+                w-8 h-8 flex items-center justify-center rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200 col-span-2 mx-auto
+                ${isPlaceMode && placeableType === 'smallNet'
+                  ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500'
+                  : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
+              `}
+            >
+              <svg className="w-4 h-3" viewBox="0 0 20 16" fill="none" aria-hidden="true">
+                <rect x="2" y="2" width="16" height="12" stroke="#3B82F6" strokeWidth="2" fill="none" />
+                <line x1="10" y1="2" x2="10" y2="14" stroke="#9CA3AF" strokeWidth="1" />
+                <line x1="2" y1="8" x2="18" y2="8" stroke="#9CA3AF" strokeWidth="1" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Main Content - Canvas and Controls */}
+        <div className="flex flex-col gap-3 flex-1 min-w-0">
+          {/* Canvas */}
+          <div className="flex justify-center bg-gray-100 dark:bg-gray-900 rounded-lg p-4 overflow-auto">
+            <canvas
+              ref={canvasRef}
+              width={canvasWidth}
+              height={canvasHeight}
+              className="border border-gray-300 dark:border-gray-600 rounded cursor-crosshair bg-white touch-none"
+              style={{ maxWidth: '100%', height: 'auto' }}
+              onClick={handleCanvasClick}
+              onDoubleClick={handleCanvasDoubleClick}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+            />
+          </div>
+
+          {/* Action Buttons with Mode Instructions */}
+          <div className="flex justify-between items-center gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+            <Button type="button" variant="outline" onClick={handleClear}>
+              <Eraser className="w-4 h-4" />
+              Clear
             </Button>
-          )}
-          
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={handleCancel}>
-              <X className="w-4 h-4" />
-              Cancel
-            </Button>
-            <Button type="button" onClick={handleSave}>
-              <Save className="w-4 h-4" />
-              Save
-            </Button>
+            
+            {/* Mode instructions - centered */}
+            <div className="flex-1 text-xs text-center text-gray-500 dark:text-gray-400">
+              {isSelectMode ? (
+                (selectedObjectId || selectedStrokeId)
+                  ? 'Drag to move, or click Delete' 
+                  : 'Click an object or line to select it'
+              ) : isPlaceMode ? (
+                placeableType === 'player' 
+                  ? (playerNumber === 0 ? 'Click to place coach' : `Click to place ${playerColor} player ${playerNumber}`)
+                  : placeableType === 'cone'
+                    ? 'Click to place cone'
+                    : placeableType === 'net'
+                      ? 'Click to place net'
+                      : 'Click to place small net'
+              ) : drawMode === 'freehand' ? (
+                'Click and drag to draw'
+              ) : drawMode === 'line' ? (
+                lineStartPoint 
+                  ? 'Click to set the end point' 
+                  : 'Click to set the start point'
+              ) : drawMode === 'curve' ? (
+                curvePoints.length === 0 
+                  ? 'Click to set the start point' 
+                  : curvePoints.length === 1 
+                    ? 'Click to set the control point' 
+                    : 'Click to set the end point'
+              ) : drawMode === 'polyline' ? (
+                polylinePoints.length === 0 
+                  ? 'Click to add points, double-click to finish' 
+                  : `${polylinePoints.length} point(s) - double-click to finish`
+              ) : null}
+            </div>
+            
+            {/* Delete button - shown when object or stroke is selected */}
+            {isSelectMode && (selectedObjectId || selectedStrokeId) && (
+              <Button type="button" variant="outline" onClick={handleDeleteSelected} className="text-red-600 border-red-300 hover:bg-red-50 dark:text-red-400 dark:border-red-800 dark:hover:bg-red-900/20">
+                <Trash2 className="w-4 h-4" />
+                Delete
+              </Button>
+            )}
+            
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={handleCancel}>
+                <X className="w-4 h-4" />
+                Cancel
+              </Button>
+              <Button type="button" onClick={handleSave}>
+                <Save className="w-4 h-4" />
+                Save
+              </Button>
+            </div>
           </div>
         </div>
       </div>
