@@ -63,7 +63,7 @@ const inputStyle = {
 };
 
 // Get storage key for form data
-const getStorageKey = (drillId: number | undefined, isCreatingNew: boolean): string => {
+const getStorageKey = (drillId: string | undefined, isCreatingNew: boolean): string => {
   if (isCreatingNew) return 'drill-form-new';
   return drillId ? `drill-form-${drillId}` : 'drill-form-new';
 };

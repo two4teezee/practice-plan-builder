@@ -2,14 +2,21 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
-import { db } from '@/lib/db';
+import { 
+  getPracticePlans,
+  getPracticePlanByName,
+  createPracticePlan,
+  updatePracticePlan,
+  getDrillByName,
+  ensurePlanHasTimeline,
+} from '@/lib/db';
 import type { 
   PracticePlan, 
   PracticePlanDrill, 
   Drill,
   PracticeDuration,
-  TimelineItem,
 } from '@/lib/types';
+import type { TimelineItem } from '@/lib/types';
 import {
   PRACTICE_DURATIONS, 
   parsePracticeDurationToSeconds,
@@ -43,8 +50,6 @@ import {
   Calendar,
   MapPin
 } from 'lucide-react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { ensurePlanHasTimeline } from '@/lib/db';
 import { LAYOUT_CONFIG, LAYOUT_STYLES, px } from '@/lib/layoutConfig';
 
 const DRAFT_STORAGE_KEY = 'practice-plan-draft';
@@ -80,7 +85,7 @@ export default function CreatePracticePlanPage() {
   
   // Duplicate name modal state
   const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
-  const [duplicatePlanId, setDuplicatePlanId] = useState<number | null>(null);
+  const [duplicatePlanId, setDuplicatePlanId] = useState<string | null>(null);
   const [newPlanName, setNewPlanName] = useState('');
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
   
@@ -90,14 +95,29 @@ export default function CreatePracticePlanPage() {
   // For drill picker context - which group to add drills to (null = main timeline)
   const [activeGroupPath, setActiveGroupPath] = useState<string[] | null>(null);
 
-  // Load saved practice plans for the load modal
-  const savedPlans = useLiveQuery(
-    async () => {
-      const plans = await db.practicePlans.orderBy('createdAt').reverse().toArray();
-      return plans.map(plan => ensurePlanHasTimeline(plan));
-    },
-    []
-  );
+  // Saved practice plans state
+  const [savedPlans, setSavedPlans] = useState<PracticePlan[]>([]);
+  const [isLoadingPlans, setIsLoadingPlans] = useState(false);
+
+  // Fetch saved practice plans
+  const fetchSavedPlans = useCallback(async () => {
+    try {
+      setIsLoadingPlans(true);
+      const plans = await getPracticePlans();
+      setSavedPlans(plans.map(plan => ensurePlanHasTimeline(plan)));
+    } catch (error) {
+      console.error('Failed to fetch saved plans:', error);
+    } finally {
+      setIsLoadingPlans(false);
+    }
+  }, []);
+
+  // Load saved plans when modal opens
+  useEffect(() => {
+    if (isLoadModalOpen) {
+      fetchSavedPlans();
+    }
+  }, [isLoadModalOpen, fetchSavedPlans]);
   
   // Compute legacy drills array from timeline for backward compatibility
   const drills = useMemo(() => convertTimelineToDrills(timeline), [timeline]);
@@ -119,8 +139,8 @@ export default function CreatePracticePlanPage() {
           }
         } else {
           // No draft - add the default "Setup Ice and Warm Ups" drill
-          const setupDrill = await db.drills.where('name').equals('Setup Ice and Warm Ups').first();
-          if (setupDrill && setupDrill.id) {
+          const setupDrill = await getDrillByName('Setup Ice and Warm Ups');
+          if (setupDrill?.id) {
             const defaultDrillItem = createDrillItem(setupDrill);
             setTimeline([defaultDrillItem]);
           }
@@ -388,8 +408,8 @@ export default function CreatePracticePlanPage() {
   // Helper to add the default "Setup Ice and Warm Ups" drill
   const addDefaultSetupDrill = useCallback(async () => {
     try {
-      const setupDrill = await db.drills.where('name').equals('Setup Ice and Warm Ups').first();
-      if (setupDrill && setupDrill.id) {
+      const setupDrill = await getDrillByName('Setup Ice and Warm Ups');
+      if (setupDrill?.id) {
         const defaultDrillItem = createDrillItem(setupDrill);
         setTimeline([defaultDrillItem]);
       } else {
@@ -408,8 +428,8 @@ export default function CreatePracticePlanPage() {
     }
 
     // Check for existing plan with the same name
-    const existingPlan = await db.practicePlans.where('name').equals(formData.name).first();
-    if (existingPlan && existingPlan.id) {
+    const existingPlan = await getPracticePlanByName(formData.name);
+    if (existingPlan?.id) {
       // Open duplicate modal to ask user what to do
       setDuplicatePlanId(existingPlan.id);
       setNewPlanName(formData.name + ' (copy)');
@@ -424,8 +444,7 @@ export default function CreatePracticePlanPage() {
   const saveNewPlan = async (overrideName?: string) => {
     setIsSaving(true);
     try {
-      const now = new Date();
-      const practicePlan: Omit<PracticePlan, 'id'> = {
+      const practicePlan: Omit<PracticePlan, 'id' | 'createdAt' | 'updatedAt'> = {
         name: overrideName || formData.name,
         description: formData.description,
         date: new Date(formData.date),
@@ -435,11 +454,9 @@ export default function CreatePracticePlanPage() {
         timeline: timeline, // New branching timeline
         notes: formData.notes,
         equipment: equipment,
-        createdAt: now,
-        updatedAt: now,
       };
 
-      await db.practicePlans.add(practicePlan);
+      await createPracticePlan(practicePlan);
       
       // Update the form name if we used an override name
       if (overrideName) {
@@ -457,11 +474,10 @@ export default function CreatePracticePlanPage() {
   };
 
   // Overwrite an existing plan
-  const overwritePlan = async (planId: number) => {
+  const overwritePlan = async (planId: string) => {
     setIsSaving(true);
     try {
-      const now = new Date();
-      await db.practicePlans.update(planId, {
+      await updatePracticePlan(planId, {
         name: formData.name,
         description: formData.description,
         date: new Date(formData.date),
@@ -471,7 +487,6 @@ export default function CreatePracticePlanPage() {
         timeline: timeline,
         notes: formData.notes,
         equipment: equipment,
-        updatedAt: now,
       });
       
       setSaveSuccess(true);
@@ -500,7 +515,7 @@ export default function CreatePracticePlanPage() {
 
   const handleSaveAsNew = async () => {
     // Check if the new name is also a duplicate
-    const existingPlan = await db.practicePlans.where('name').equals(newPlanName).first();
+    const existingPlan = await getPracticePlanByName(newPlanName);
     if (existingPlan) {
       alert('A plan with this name already exists. Please choose a different name.');
       return;
@@ -826,7 +841,12 @@ export default function CreatePracticePlanPage() {
         size="lg"
       >
         <div className="max-h-[60vh] overflow-y-auto">
-          {!savedPlans || savedPlans.length === 0 ? (
+          {isLoadingPlans ? (
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-3"></div>
+              <p className="text-gray-500 dark:text-gray-400">Loading plans...</p>
+            </div>
+          ) : !savedPlans || savedPlans.length === 0 ? (
             <div className="text-center py-8 text-gray-500 dark:text-gray-400">
               <FolderOpen className="w-12 h-12 mx-auto mb-3 opacity-50" />
               <p>No saved practice plans found.</p>

@@ -3,7 +3,7 @@ export type SkillFocus = 'Skating' | 'Shooting' | 'Passing' | 'Defensive' | 'Off
 export type PracticeDuration = '30 minutes' | '45 minutes' | '50 minutes' | '60 minutes' | '75 minutes' | '90 minutes';
 
 export interface Drill {
-  id?: number;
+  id?: string; // UUID from Supabase
   name: string;
   category: DrillCategory;
   duration: string; // "0:30" to "30:00"
@@ -24,7 +24,7 @@ export interface Drill {
 
 export interface PracticePlanDrill {
   id: string; // unique id for drag-drop
-  drillId: number;
+  drillId: string; // UUID reference to drill
   drill: Drill;
   customDuration?: string; // override the drill's default duration for this practice
   customNotes?: string;
@@ -42,7 +42,7 @@ export type TimelineItem = DrillItem | ParallelSplitItem;
 export interface DrillItem {
   type: 'drill';
   id: string;
-  drillId: number;
+  drillId: string; // UUID reference to drill
   drill: Drill;
   customDuration?: string;
   customNotes?: string;
@@ -236,7 +236,7 @@ export function removeGroupFromSplit(split: ParallelSplitItem, groupId: string):
 }
 
 export interface PracticePlan {
-  id?: number;
+  id?: string; // UUID from Supabase
   name: string;
   description: string;
   date: Date;

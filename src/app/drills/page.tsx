@@ -1,8 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { useState, useEffect, useCallback } from 'react';
+import { getDrills, getDrillByName, createDrill, updateDrill, deleteDrill } from '@/lib/db';
 import type { Drill, DrillCategory } from '@/lib/types';
 import { DRILL_CATEGORIES } from '@/lib/types';
 import { DrillCard } from '@/components/drills/DrillCard';
@@ -23,14 +22,34 @@ export default function DrillsPage() {
     new Set(DRILL_CATEGORIES)
   );
   const [isLoaded, setIsLoaded] = useState(false);
+  const [drills, setDrills] = useState<Drill[]>([]);
+  const [isLoadingDrills, setIsLoadingDrills] = useState(true);
   
   // Duplicate name modal state
   const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
-  const [duplicateDrillId, setDuplicateDrillId] = useState<number | null>(null);
+  const [duplicateDrillId, setDuplicateDrillId] = useState<string | null>(null);
   const [pendingDrillData, setPendingDrillData] = useState<Omit<Drill, 'id' | 'createdAt' | 'updatedAt'> | null>(null);
   const [newDrillName, setNewDrillName] = useState('');
   const [isSaveAsNew, setIsSaveAsNew] = useState(false);
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
+
+  // Fetch drills from database
+  const fetchDrills = useCallback(async () => {
+    try {
+      setIsLoadingDrills(true);
+      const data = await getDrills();
+      setDrills(data);
+    } catch (error) {
+      console.error('Failed to fetch drills:', error);
+    } finally {
+      setIsLoadingDrills(false);
+    }
+  }, []);
+
+  // Load drills on mount
+  useEffect(() => {
+    fetchDrills();
+  }, [fetchDrills]);
 
   // Load saved category filter from localStorage
   useEffect(() => {
@@ -85,11 +104,6 @@ export default function DrillsPage() {
     });
   };
 
-  const drills = useLiveQuery(
-    () => db.drills.orderBy('name').toArray(),
-    []
-  );
-
   const filteredDrills = drills?.filter((drill) => {
     const matchesSearch = drill.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       drill.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -100,9 +114,9 @@ export default function DrillsPage() {
 
   const handleSave = async (drillData: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>) => {
     // Check for existing drill with the same name (excluding current drill if editing)
-    const existingDrill = await db.drills.where('name').equals(drillData.name).first();
+    const existingDrill = await getDrillByName(drillData.name);
     
-    if (existingDrill && existingDrill.id && existingDrill.id !== editingDrill?.id) {
+    if (existingDrill?.id && existingDrill.id !== editingDrill?.id) {
       // Name collision with a different drill - show modal
       setDuplicateDrillId(existingDrill.id);
       setPendingDrillData(drillData);
@@ -118,9 +132,9 @@ export default function DrillsPage() {
 
   const handleSaveAsNew = async (drillData: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>) => {
     // Check for existing drill with the same name
-    const existingDrill = await db.drills.where('name').equals(drillData.name).first();
+    const existingDrill = await getDrillByName(drillData.name);
     
-    if (existingDrill && existingDrill.id) {
+    if (existingDrill?.id) {
       // Name collision - show modal
       setDuplicateDrillId(existingDrill.id);
       setPendingDrillData(drillData);
@@ -136,31 +150,20 @@ export default function DrillsPage() {
 
   // Actual save logic (no duplicate check)
   const performSave = async (drillData: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const now = new Date();
     if (editingDrill?.id) {
-      await db.drills.update(editingDrill.id, {
-        ...drillData,
-        updatedAt: now,
-      });
+      await updateDrill(editingDrill.id, drillData);
     } else {
-      await db.drills.add({
-        ...drillData,
-        createdAt: now,
-        updatedAt: now,
-      });
+      await createDrill(drillData);
     }
+    await fetchDrills();
     setIsModalOpen(false);
     setEditingDrill(null);
   };
 
   // Actual save as new logic (no duplicate check)
   const performSaveAsNew = async (drillData: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const now = new Date();
-    await db.drills.add({
-      ...drillData,
-      createdAt: now,
-      updatedAt: now,
-    });
+    await createDrill(drillData);
+    await fetchDrills();
     setIsModalOpen(false);
     setEditingDrill(null);
   };
@@ -172,11 +175,8 @@ export default function DrillsPage() {
 
   const handleConfirmOverwriteDrill = async () => {
     if (duplicateDrillId && pendingDrillData) {
-      const now = new Date();
-      await db.drills.update(duplicateDrillId, {
-        ...pendingDrillData,
-        updatedAt: now,
-      });
+      await updateDrill(duplicateDrillId, pendingDrillData);
+      await fetchDrills();
       setIsModalOpen(false);
       setEditingDrill(null);
     }
@@ -189,7 +189,7 @@ export default function DrillsPage() {
     if (!pendingDrillData) return;
 
     // Check if the new name is also a duplicate
-    const existingDrill = await db.drills.where('name').equals(newDrillName).first();
+    const existingDrill = await getDrillByName(newDrillName);
     if (existingDrill) {
       alert('A drill with this name already exists. Please choose a different name.');
       return;
@@ -201,11 +201,8 @@ export default function DrillsPage() {
       await performSaveAsNew(drillDataWithNewName);
     } else if (editingDrill?.id) {
       // When editing, save with new name means update the current drill
-      const now = new Date();
-      await db.drills.update(editingDrill.id, {
-        ...drillDataWithNewName,
-        updatedAt: now,
-      });
+      await updateDrill(editingDrill.id, drillDataWithNewName);
+      await fetchDrills();
       setIsModalOpen(false);
       setEditingDrill(null);
     } else {
@@ -229,7 +226,8 @@ export default function DrillsPage() {
 
   const handleDelete = async (drill: Drill) => {
     if (drill.id) {
-      await db.drills.delete(drill.id);
+      await deleteDrill(drill.id);
+      await fetchDrills();
       setIsModalOpen(false);
       setEditingDrill(null);
     }
@@ -331,7 +329,12 @@ export default function DrillsPage() {
       </div>
 
       {/* Drills Grid */}
-      {filteredDrills && filteredDrills.length > 0 ? (
+      {isLoadingDrills ? (
+        <div className="text-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-3"></div>
+          <p className="text-gray-500 dark:text-gray-400">Loading drills...</p>
+        </div>
+      ) : filteredDrills && filteredDrills.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {filteredDrills.map((drill) => (
             <DrillCard

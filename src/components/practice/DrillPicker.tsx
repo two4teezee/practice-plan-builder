@@ -1,8 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/lib/db';
+import { useState, useEffect, useCallback } from 'react';
+import { getDrills } from '@/lib/db';
 import { Drill, DRILL_CATEGORIES, DrillCategory } from '@/lib/types';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
@@ -15,13 +14,33 @@ type CategoryFilter = 'All' | DrillCategory;
 
 interface DrillPickerProps {
   onAdd: (drill: Drill) => void;
-  addedDrillIds: number[];
+  addedDrillIds: string[];
 }
 
 export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>('All');
   const [isLoaded, setIsLoaded] = useState(false);
+  const [drills, setDrills] = useState<Drill[]>([]);
+  const [isLoadingDrills, setIsLoadingDrills] = useState(true);
+
+  // Fetch drills from database
+  const fetchDrills = useCallback(async () => {
+    try {
+      setIsLoadingDrills(true);
+      const data = await getDrills();
+      setDrills(data);
+    } catch (error) {
+      console.error('Failed to fetch drills:', error);
+    } finally {
+      setIsLoadingDrills(false);
+    }
+  }, []);
+
+  // Load drills on mount
+  useEffect(() => {
+    fetchDrills();
+  }, [fetchDrills]);
 
   // Load saved category filter from localStorage
   useEffect(() => {
@@ -55,11 +74,6 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
   const selectCategory = (category: CategoryFilter) => {
     setSelectedCategory(category);
   };
-
-  const drills = useLiveQuery(
-    () => db.drills.orderBy('name').toArray(),
-    []
-  );
 
   const filteredDrills = drills?.filter((drill) => {
     const matchesSearch = drill.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -144,7 +158,12 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
 
       {/* Drills List */}
       <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-        {filteredDrills?.map((drill) => {
+        {isLoadingDrills ? (
+          <div className="text-center py-8">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600 mx-auto mb-2"></div>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Loading drills...</p>
+          </div>
+        ) : filteredDrills?.map((drill) => {
           const isAdded = drill.id !== undefined && addedDrillIds.includes(drill.id);
           return (
             <Card key={drill.id} className="p-3">
@@ -178,7 +197,7 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
             </Card>
           );
         })}
-        {filteredDrills?.length === 0 && (
+        {!isLoadingDrills && filteredDrills?.length === 0 && (
           <div className="text-center py-8 text-gray-500 dark:text-gray-400">
             No drills found
           </div>

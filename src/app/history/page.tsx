@@ -1,9 +1,8 @@
 'use client';
 
-import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
-import { db, refreshPlanDrillData } from '@/lib/db';
+import { getPracticePlans, deletePracticePlan, refreshPlanDrillData } from '@/lib/db';
 import type { PracticePlan, TimelineItem, DrillItem, ParallelSplitItem } from '@/lib/types';
 import { flattenTimelineDrills, getTimelineItemDuration, secondsToDurationString } from '@/lib/types';
 import { Card } from '@/components/ui/Card';
@@ -306,23 +305,36 @@ function TimelineItemModalView({ item, index, nested = false }: { item: Timeline
 export default function HistoryPage() {
   const [selectedPlan, setSelectedPlan] = useState<PracticePlan | null>(null);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
-  const [expandedPlanId, setExpandedPlanId] = useState<number | null>(null);
+  const [expandedPlanId, setExpandedPlanId] = useState<string | null>(null);
+  const [practicePlans, setPracticePlans] = useState<PracticePlan[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const practicePlans = useLiveQuery(
-    async () => {
-      const plans = await db.practicePlans.orderBy('createdAt').reverse().toArray();
+  // Fetch practice plans
+  const fetchPlans = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const plans = await getPracticePlans();
       // Ensure all plans have timeline and refresh drill data (for updated sketches, etc.)
       const refreshedPlans = await Promise.all(
         plans.map(plan => refreshPlanDrillData(plan))
       );
-      return refreshedPlans;
-    },
-    []
-  );
+      setPracticePlans(refreshedPlans);
+    } catch (error) {
+      console.error('Failed to fetch practice plans:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Load plans on mount
+  useEffect(() => {
+    fetchPlans();
+  }, [fetchPlans]);
 
   const handleDelete = async (plan: PracticePlan) => {
     if (plan.id && confirm(`Are you sure you want to delete "${plan.name}"?`)) {
-      await db.practicePlans.delete(plan.id);
+      await deletePracticePlan(plan.id);
+      await fetchPlans();
     }
   };
 
@@ -343,7 +355,7 @@ export default function HistoryPage() {
     await printPracticePlan(plan);
   };
 
-  const toggleExpand = (planId: number | undefined) => {
+  const toggleExpand = (planId: string | undefined) => {
     if (planId === undefined) return;
     setExpandedPlanId(expandedPlanId === planId ? null : planId);
   };
@@ -373,7 +385,12 @@ export default function HistoryPage() {
       </div>
 
       {/* Practice Plans List */}
-      {practicePlans && practicePlans.length > 0 ? (
+      {isLoading ? (
+        <div className="text-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-3"></div>
+          <p className="text-gray-500 dark:text-gray-400">Loading practice plans...</p>
+        </div>
+      ) : practicePlans && practicePlans.length > 0 ? (
         <div className="space-y-3">
           {practicePlans.map((plan) => {
             const practiceDate = plan.date instanceof Date ? plan.date : new Date(plan.date);
