@@ -7,6 +7,7 @@ import { DRILL_DURATIONS, parseVariations } from '@/lib/types';
 import { GripVertical, X, ChevronDown, ChevronUp, Clock, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { ParallelGroupEditor } from './ParallelGroupEditor';
 
 interface SortableTimelineItemProps {
@@ -28,7 +29,7 @@ interface SortableTimelineItemProps {
   compact?: boolean;
 }
 
-// Variations dropdown component
+// Variations dropdown component - uses portal to avoid clipping
 function VariationsDropdown({
   variations,
   selectedVariations,
@@ -41,17 +42,45 @@ function VariationsDropdown({
   compact?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (
+        buttonRef.current && !buttonRef.current.contains(target) &&
+        dropdownRef.current && !dropdownRef.current.contains(target)
+      ) {
         setIsOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Update position when opening
+  useEffect(() => {
+    if (isOpen && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const dropdownWidth = 250;
+      
+      // Position dropdown below button, aligned to right edge
+      let left = rect.right - dropdownWidth;
+      // Ensure it doesn't go off screen left
+      if (left < 10) left = 10;
+      // Ensure it doesn't go off screen right
+      if (left + dropdownWidth > window.innerWidth - 10) {
+        left = window.innerWidth - dropdownWidth - 10;
+      }
+      
+      setDropdownPosition({
+        top: rect.bottom + 4,
+        left: left,
+      });
+    }
+  }, [isOpen]);
 
   const toggleVariation = (variation: string) => {
     if (selectedVariations.includes(variation)) {
@@ -65,8 +94,9 @@ function VariationsDropdown({
   const hasSelections = selectedCount > 0;
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative">
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         className={`
@@ -87,8 +117,15 @@ function VariationsDropdown({
         <ChevronDown className={`${compact ? 'w-3 h-3' : 'w-4 h-4'} ${isOpen ? 'rotate-180' : ''} transition-transform`} />
       </button>
 
-      {isOpen && (
-        <div className="absolute z-50 mt-1 right-0 min-w-[200px] max-w-[300px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg">
+      {isOpen && typeof document !== 'undefined' && createPortal(
+        <div 
+          ref={dropdownRef}
+          className="fixed z-[9999] min-w-[200px] max-w-[300px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-xl"
+          style={{ 
+            top: dropdownPosition.top,
+            left: dropdownPosition.left,
+          }}
+        >
           <div className="p-2 border-b border-gray-100 dark:border-gray-700">
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
               Select variations to run
@@ -123,7 +160,8 @@ function VariationsDropdown({
               </button>
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

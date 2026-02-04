@@ -130,7 +130,7 @@ function GroupColumn({
   
   return (
     <div 
-      className="rounded-lg border-2 overflow-hidden flex-1"
+      className="rounded-lg border-2 flex-1"
       style={{ borderColor: group.color + '40', minWidth }}
     >
       {/* Group Header - compact for nested */}
