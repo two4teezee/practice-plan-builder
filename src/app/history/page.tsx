@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
+import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { getPracticePlans, deletePracticePlan, refreshPlanDrillData } from '@/lib/db';
 import type { PracticePlan, TimelineItem, DrillItem, ParallelSplitItem } from '@/lib/types';
 import { flattenTimelineDrills, getTimelineItemDuration, secondsToDurationString } from '@/lib/types';
@@ -364,6 +365,7 @@ export default function HistoryPage() {
   const S = LAYOUT_STYLES;
 
   return (
+    <ProtectedRoute>
     <div className="mx-auto" style={S.container}>
       {/* Header */}
       <div style={S.pageHeaderWrapper}>
@@ -686,5 +688,6 @@ export default function HistoryPage() {
         )}
       </Modal>
     </div>
+    </ProtectedRoute>
   );
 }

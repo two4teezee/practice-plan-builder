@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
+import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { 
   getPracticePlans,
   getPracticePlanByName,
@@ -573,6 +574,7 @@ export default function CreatePracticePlanPage() {
   const S = LAYOUT_STYLES;
 
   return (
+    <ProtectedRoute>
     <div 
       className="mx-auto h-[calc(100vh-3rem)] lg:h-[calc(100vh-2.5rem)] flex flex-col"
       style={{ maxWidth: px(L.maxWidth) }}
@@ -989,5 +991,6 @@ export default function CreatePracticePlanPage() {
         </div>
       </Modal>
     </div>
+    </ProtectedRoute>
   );
 }

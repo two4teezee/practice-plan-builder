@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { getDrills, getDrillByName, createDrill, updateDrill, deleteDrill } from '@/lib/db';
 import type { Drill, DrillCategory } from '@/lib/types';
 import { DRILL_CATEGORIES } from '@/lib/types';
@@ -254,6 +255,7 @@ export default function DrillsPage() {
   const S = LAYOUT_STYLES;
 
   return (
+    <ProtectedRoute>
     <div className="mx-auto" style={S.container}>
       {/* Header */}
       <div style={S.pageHeaderWrapper}>
@@ -472,5 +474,6 @@ export default function DrillsPage() {
         </div>
       </Modal>
     </div>
+    </ProtectedRoute>
   );
 }
