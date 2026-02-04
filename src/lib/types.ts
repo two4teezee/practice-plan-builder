@@ -1,9 +1,9 @@
-export type DrillCategory = 'Admin' | 'Skating' | 'Shooting' | 'Passing' | 'Defensive' | 'Offensive' | 'Scrimmage' | 'Other';
+export type DrillCategory = 'Admin' | 'Skating' | 'Shooting' | 'Passing' | 'Defensive' | 'Offensive' | 'Goalie' | 'Scrimmage' | 'Other';
 export type SkillFocus = 'Skating' | 'Shooting' | 'Passing' | 'Defensive' | 'Offensive' | 'Other';
 export type PracticeDuration = '30 minutes' | '45 minutes' | '50 minutes' | '60 minutes' | '75 minutes' | '90 minutes';
 
 export interface Drill {
-  id?: number;
+  id?: string; // UUID from Supabase
   name: string;
   category: DrillCategory;
   duration: string; // "0:30" to "30:00"
@@ -17,13 +17,14 @@ export interface Drill {
   description: string;
   videoLink: string;
   pdfLink: string;
+  sketchData?: string; // JSON string containing sketch strokes and rink view
   createdAt: Date;
   updatedAt: Date;
 }
 
 export interface PracticePlanDrill {
   id: string; // unique id for drag-drop
-  drillId: number;
+  drillId: string; // UUID reference to drill
   drill: Drill;
   customDuration?: string; // override the drill's default duration for this practice
   customNotes?: string;
@@ -41,10 +42,24 @@ export type TimelineItem = DrillItem | ParallelSplitItem;
 export interface DrillItem {
   type: 'drill';
   id: string;
-  drillId: number;
+  drillId: string; // UUID reference to drill
   drill: Drill;
   customDuration?: string;
   customNotes?: string;
+  selectedVariations?: string[]; // Selected variation names for this practice
+}
+
+// Parse variations string into array of variation names
+export function parseVariations(variations: string): string[] {
+  if (!variations || !variations.trim()) return [];
+  
+  // Split by common delimiters: newlines, semicolons, or numbered lists
+  const lines = variations
+    .split(/[\n;]|(?:\d+\.\s*)/)
+    .map(v => v.trim())
+    .filter(v => v.length > 0);
+  
+  return lines;
 }
 
 // A parallel split containing multiple concurrent groups
@@ -189,6 +204,7 @@ export function createDrillItem(drill: Drill): DrillItem {
     id: `drill-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     drillId: drill.id!,
     drill,
+    selectedVariations: [],
   };
 }
 
@@ -220,7 +236,7 @@ export function removeGroupFromSplit(split: ParallelSplitItem, groupId: string):
 }
 
 export interface PracticePlan {
-  id?: number;
+  id?: string; // UUID from Supabase
   name: string;
   description: string;
   date: Date;
@@ -234,7 +250,7 @@ export interface PracticePlan {
   updatedAt: Date;
 }
 
-export const DRILL_CATEGORIES: DrillCategory[] = ['Admin', 'Skating', 'Shooting', 'Passing', 'Defensive', 'Offensive', 'Scrimmage', 'Other'];
+export const DRILL_CATEGORIES: DrillCategory[] = ['Admin', 'Skating', 'Shooting', 'Passing', 'Defensive', 'Offensive', 'Goalie', 'Scrimmage', 'Other'];
 
 // Equipment options for drills
 export const EQUIPMENT_OPTIONS = [

@@ -42,6 +42,7 @@ interface ParallelGroupEditorProps {
   onReorderGroup: (parallelId: string, groupId: string, items: TimelineItem[]) => void;
   onRemove: (id: string) => void;
   onUpdateDuration: (id: string, duration: string) => void;
+  onUpdateVariations: (id: string, variations: string[]) => void;
   onViewDetails: (item: DrillItem) => void;
   onAddDrillToGroup: (groupPath: string[]) => void;
   onAddNestedSplit: (parallelId: string, groupId: string) => void;
@@ -68,6 +69,7 @@ function GroupColumn({
   onReorderGroup,
   onRemove,
   onUpdateDuration,
+  onUpdateVariations,
   onViewDetails,
   onAddDrillToGroup,
   onAddNestedSplit,
@@ -90,6 +92,7 @@ function GroupColumn({
   onReorderGroup: (parallelId: string, groupId: string, items: TimelineItem[]) => void;
   onRemove: (id: string) => void;
   onUpdateDuration: (id: string, duration: string) => void;
+  onUpdateVariations: (id: string, variations: string[]) => void;
   onViewDetails: (item: DrillItem) => void;
   onAddDrillToGroup: (groupPath: string[]) => void;
   onAddNestedSplit: (parallelId: string, groupId: string) => void;
@@ -127,7 +130,7 @@ function GroupColumn({
   
   return (
     <div 
-      className="rounded-lg border-2 overflow-hidden flex-1"
+      className="rounded-lg border-2 flex-1"
       style={{ borderColor: group.color + '40', minWidth }}
     >
       {/* Group Header - compact for nested */}
@@ -237,6 +240,7 @@ function GroupColumn({
                     index={index}
                     onRemove={onRemove}
                     onUpdateDuration={onUpdateDuration}
+                    onUpdateVariations={onUpdateVariations}
                     onViewDetails={onViewDetails}
                     onReorderGroup={onReorderGroup}
                     onAddDrillToGroup={onAddDrillToGroup}
@@ -286,6 +290,7 @@ export function ParallelGroupEditor({
   onReorderGroup,
   onRemove,
   onUpdateDuration,
+  onUpdateVariations,
   onViewDetails,
   onAddDrillToGroup,
   onAddNestedSplit,
@@ -401,6 +406,7 @@ export function ParallelGroupEditor({
                 onReorderGroup={onReorderGroup}
                 onRemove={onRemove}
                 onUpdateDuration={onUpdateDuration}
+                onUpdateVariations={onUpdateVariations}
                 onViewDetails={onViewDetails}
                 onAddDrillToGroup={onAddDrillToGroup}
                 onAddNestedSplit={onAddNestedSplit}

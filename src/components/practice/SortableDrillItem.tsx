@@ -38,6 +38,7 @@ export function SortableDrillItem({ item, onRemove, onUpdateDuration, onViewDeta
     Passing: 'border-l-green-500',
     Defensive: 'border-l-purple-500',
     Offensive: 'border-l-orange-500',
+    Goalie: 'border-l-yellow-500',
     Scrimmage: 'border-l-cyan-500',
     Other: 'border-l-gray-500',
   };

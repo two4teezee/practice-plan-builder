@@ -1,35 +1,394 @@
-import Dexie, { type EntityTable } from 'dexie';
+import { supabase, isSupabaseConfigured } from './supabase';
 import type { Drill, PracticePlan, PracticePlanDrill, TimelineItem } from './types';
 
-const db = new Dexie('HockeyPracticePlanner') as Dexie & {
-  drills: EntityTable<Drill, 'id'>;
-  practicePlans: EntityTable<PracticePlan, 'id'>;
-};
+// ============================================
+// Database Row Types (snake_case from Supabase)
+// ============================================
 
-db.version(1).stores({
-  drills: '++id, name, category, skillFocus, createdAt',
-  practicePlans: '++id, name, date, coach, createdAt',
-});
+interface DrillRow {
+  id: string;
+  name: string;
+  category: string;
+  duration: string;
+  skill_focus: string;
+  objective: string;
+  setup: string;
+  execution: string;
+  coaching_points: string;
+  variations: string;
+  equipment: string;
+  description: string;
+  video_link: string;
+  pdf_link: string;
+  sketch_data: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
-db.version(2).stores({
-  drills: '++id, name, category, skillFocus, createdAt',
-  practicePlans: '++id, name, date, createdAt',
-});
+interface PracticePlanRow {
+  id: string;
+  name: string;
+  description: string;
+  date: string;
+  duration: string;
+  location: string;
+  notes: string;
+  equipment: string;
+  timeline: TimelineItem[];
+  drills: PracticePlanDrill[];
+  created_at: string;
+  updated_at: string;
+}
 
-// Version 3: Add timeline field to practice plans for branching support
-db.version(3).stores({
-  drills: '++id, name, category, skillFocus, createdAt',
-  practicePlans: '++id, name, date, createdAt',
-}).upgrade(async tx => {
-  // Migrate existing practice plans to include timeline
-  const practicePlans = tx.table('practicePlans');
-  await practicePlans.toCollection().modify(plan => {
-    if (!plan.timeline && plan.drills) {
-      // Convert legacy drills array to timeline format
-      plan.timeline = migrateDrillsToTimeline(plan.drills);
-    }
-  });
-});
+// ============================================
+// Conversion Functions (Row <-> App Types)
+// ============================================
+
+function drillRowToApp(row: DrillRow): Drill {
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category as Drill['category'],
+    duration: row.duration,
+    skillFocus: row.skill_focus as Drill['skillFocus'],
+    objective: row.objective || '',
+    setup: row.setup || '',
+    execution: row.execution || '',
+    coachingPoints: row.coaching_points || '',
+    variations: row.variations || '',
+    equipment: row.equipment || '',
+    description: row.description || '',
+    videoLink: row.video_link || '',
+    pdfLink: row.pdf_link || '',
+    sketchData: row.sketch_data || undefined,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
+}
+
+function drillAppToRow(drill: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>): Omit<DrillRow, 'id' | 'created_at' | 'updated_at'> {
+  return {
+    name: drill.name,
+    category: drill.category,
+    duration: drill.duration,
+    skill_focus: drill.skillFocus,
+    objective: drill.objective,
+    setup: drill.setup,
+    execution: drill.execution,
+    coaching_points: drill.coachingPoints,
+    variations: drill.variations,
+    equipment: drill.equipment,
+    description: drill.description,
+    video_link: drill.videoLink,
+    pdf_link: drill.pdfLink,
+    sketch_data: drill.sketchData || null,
+  };
+}
+
+function practicePlanRowToApp(row: PracticePlanRow): PracticePlan {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description || '',
+    date: new Date(row.date),
+    duration: row.duration as PracticePlan['duration'],
+    location: row.location || '',
+    notes: row.notes || '',
+    equipment: row.equipment || '',
+    timeline: row.timeline || [],
+    drills: row.drills || [],
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
+}
+
+function practicePlanAppToRow(plan: Omit<PracticePlan, 'id' | 'createdAt' | 'updatedAt'>): Omit<PracticePlanRow, 'id' | 'created_at' | 'updated_at'> {
+  // Format date as YYYY-MM-DD for Supabase
+  const dateStr = plan.date instanceof Date 
+    ? plan.date.toISOString().split('T')[0]
+    : new Date(plan.date).toISOString().split('T')[0];
+  
+  return {
+    name: plan.name,
+    description: plan.description,
+    date: dateStr,
+    duration: plan.duration,
+    location: plan.location,
+    notes: plan.notes,
+    equipment: plan.equipment,
+    timeline: plan.timeline,
+    drills: plan.drills,
+  };
+}
+
+// ============================================
+// Drill CRUD Operations
+// ============================================
+
+export async function getDrills(): Promise<Drill[]> {
+  if (!isSupabaseConfigured()) {
+    console.warn('Supabase not configured, returning empty drills');
+    return [];
+  }
+  
+  const { data, error } = await supabase
+    .from('drills')
+    .select('*')
+    .order('name');
+  
+  if (error) {
+    console.error('Error fetching drills:', error);
+    throw error;
+  }
+  
+  return (data || []).map(drillRowToApp);
+}
+
+export async function getDrill(id: string): Promise<Drill | null> {
+  const { data, error } = await supabase
+    .from('drills')
+    .select('*')
+    .eq('id', id)
+    .single();
+  
+  if (error) {
+    if (error.code === 'PGRST116') return null; // Not found
+    console.error('Error fetching drill:', error);
+    throw error;
+  }
+  
+  return data ? drillRowToApp(data) : null;
+}
+
+export async function getDrillByName(name: string): Promise<Drill | null> {
+  const { data, error } = await supabase
+    .from('drills')
+    .select('*')
+    .eq('name', name)
+    .maybeSingle();
+  
+  if (error) {
+    console.error('Error fetching drill by name:', error);
+    throw error;
+  }
+  
+  return data ? drillRowToApp(data) : null;
+}
+
+export async function createDrill(drill: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>): Promise<Drill> {
+  const row = drillAppToRow(drill);
+  
+  const { data, error } = await supabase
+    .from('drills')
+    .insert(row)
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('Error creating drill:', error);
+    throw error;
+  }
+  
+  return drillRowToApp(data);
+}
+
+export async function updateDrill(id: string, drill: Partial<Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>>): Promise<Drill> {
+  // Convert partial app fields to partial row fields
+  const updates: Record<string, unknown> = {};
+  if (drill.name !== undefined) updates.name = drill.name;
+  if (drill.category !== undefined) updates.category = drill.category;
+  if (drill.duration !== undefined) updates.duration = drill.duration;
+  if (drill.skillFocus !== undefined) updates.skill_focus = drill.skillFocus;
+  if (drill.objective !== undefined) updates.objective = drill.objective;
+  if (drill.setup !== undefined) updates.setup = drill.setup;
+  if (drill.execution !== undefined) updates.execution = drill.execution;
+  if (drill.coachingPoints !== undefined) updates.coaching_points = drill.coachingPoints;
+  if (drill.variations !== undefined) updates.variations = drill.variations;
+  if (drill.equipment !== undefined) updates.equipment = drill.equipment;
+  if (drill.description !== undefined) updates.description = drill.description;
+  if (drill.videoLink !== undefined) updates.video_link = drill.videoLink;
+  if (drill.pdfLink !== undefined) updates.pdf_link = drill.pdfLink;
+  if (drill.sketchData !== undefined) updates.sketch_data = drill.sketchData;
+  
+  const { data, error } = await supabase
+    .from('drills')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('Error updating drill:', error);
+    throw error;
+  }
+  
+  return drillRowToApp(data);
+}
+
+export async function deleteDrill(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('drills')
+    .delete()
+    .eq('id', id);
+  
+  if (error) {
+    console.error('Error deleting drill:', error);
+    throw error;
+  }
+}
+
+export async function getDrillsCount(): Promise<number> {
+  if (!isSupabaseConfigured()) {
+    return 0;
+  }
+  
+  const { count, error } = await supabase
+    .from('drills')
+    .select('*', { count: 'exact', head: true });
+  
+  if (error) {
+    console.error('Error counting drills:', error);
+    throw error;
+  }
+  
+  return count || 0;
+}
+
+export async function getDrillsByIds(ids: string[]): Promise<Drill[]> {
+  if (ids.length === 0) return [];
+  if (!isSupabaseConfigured()) return [];
+  
+  const { data, error } = await supabase
+    .from('drills')
+    .select('*')
+    .in('id', ids);
+  
+  if (error) {
+    console.error('Error fetching drills by IDs:', error);
+    throw error;
+  }
+  
+  return (data || []).map(drillRowToApp);
+}
+
+// ============================================
+// Practice Plan CRUD Operations
+// ============================================
+
+export async function getPracticePlans(): Promise<PracticePlan[]> {
+  if (!isSupabaseConfigured()) {
+    console.warn('Supabase not configured, returning empty practice plans');
+    return [];
+  }
+  
+  const { data, error } = await supabase
+    .from('practice_plans')
+    .select('*')
+    .order('created_at', { ascending: false });
+  
+  if (error) {
+    console.error('Error fetching practice plans:', error);
+    throw error;
+  }
+  
+  return (data || []).map(practicePlanRowToApp);
+}
+
+export async function getPracticePlan(id: string): Promise<PracticePlan | null> {
+  const { data, error } = await supabase
+    .from('practice_plans')
+    .select('*')
+    .eq('id', id)
+    .single();
+  
+  if (error) {
+    if (error.code === 'PGRST116') return null; // Not found
+    console.error('Error fetching practice plan:', error);
+    throw error;
+  }
+  
+  return data ? practicePlanRowToApp(data) : null;
+}
+
+export async function getPracticePlanByName(name: string): Promise<PracticePlan | null> {
+  const { data, error } = await supabase
+    .from('practice_plans')
+    .select('*')
+    .eq('name', name)
+    .maybeSingle();
+  
+  if (error) {
+    console.error('Error fetching practice plan by name:', error);
+    throw error;
+  }
+  
+  return data ? practicePlanRowToApp(data) : null;
+}
+
+export async function createPracticePlan(plan: Omit<PracticePlan, 'id' | 'createdAt' | 'updatedAt'>): Promise<PracticePlan> {
+  const row = practicePlanAppToRow(plan);
+  
+  const { data, error } = await supabase
+    .from('practice_plans')
+    .insert(row)
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('Error creating practice plan:', error);
+    throw error;
+  }
+  
+  return practicePlanRowToApp(data);
+}
+
+export async function updatePracticePlan(id: string, plan: Partial<Omit<PracticePlan, 'id' | 'createdAt' | 'updatedAt'>>): Promise<PracticePlan> {
+  // Convert partial app fields to partial row fields
+  const updates: Record<string, unknown> = {};
+  if (plan.name !== undefined) updates.name = plan.name;
+  if (plan.description !== undefined) updates.description = plan.description;
+  if (plan.date !== undefined) {
+    updates.date = plan.date instanceof Date 
+      ? plan.date.toISOString().split('T')[0]
+      : new Date(plan.date).toISOString().split('T')[0];
+  }
+  if (plan.duration !== undefined) updates.duration = plan.duration;
+  if (plan.location !== undefined) updates.location = plan.location;
+  if (plan.notes !== undefined) updates.notes = plan.notes;
+  if (plan.equipment !== undefined) updates.equipment = plan.equipment;
+  if (plan.timeline !== undefined) updates.timeline = plan.timeline;
+  if (plan.drills !== undefined) updates.drills = plan.drills;
+  
+  const { data, error } = await supabase
+    .from('practice_plans')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single();
+  
+  if (error) {
+    console.error('Error updating practice plan:', error);
+    throw error;
+  }
+  
+  return practicePlanRowToApp(data);
+}
+
+export async function deletePracticePlan(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('practice_plans')
+    .delete()
+    .eq('id', id);
+  
+  if (error) {
+    console.error('Error deleting practice plan:', error);
+    throw error;
+  }
+}
+
+// ============================================
+// Helper Functions
+// ============================================
 
 // Migration helper: convert legacy PracticePlanDrill[] to TimelineItem[]
 function migrateDrillsToTimeline(drills: PracticePlanDrill[]): TimelineItem[] {
@@ -62,10 +421,85 @@ export function ensurePlanHasTimeline(plan: PracticePlan): PracticePlan {
   return plan;
 }
 
-export { db };
+// Helper to recursively refresh drill data in timeline items
+async function refreshTimelineItems(items: TimelineItem[], drillsMap: Map<string, Drill>): Promise<TimelineItem[]> {
+  return Promise.all(items.map(async (item) => {
+    if (item.type === 'drill') {
+      const freshDrill = drillsMap.get(item.drillId);
+      if (freshDrill) {
+        return {
+          ...item,
+          drill: freshDrill,
+        };
+      }
+      return item;
+    } else {
+      // Parallel split - recursively refresh groups
+      return {
+        ...item,
+        groups: await Promise.all(item.groups.map(async (group) => ({
+          ...group,
+          items: await refreshTimelineItems(group.items, drillsMap),
+        }))),
+      };
+    }
+  }));
+}
 
-// Seed data for initial drills
-export const seedDrills: Omit<Drill, 'id'>[] = [
+// Refresh a practice plan's drill data with latest from database
+// This ensures sketches and other drill updates are reflected
+export async function refreshPlanDrillData(plan: PracticePlan): Promise<PracticePlan> {
+  const normalizedPlan = ensurePlanHasTimeline(plan);
+  
+  if (!normalizedPlan.timeline || normalizedPlan.timeline.length === 0) {
+    return normalizedPlan;
+  }
+  
+  // Collect all drill IDs from the timeline
+  const collectDrillIds = (items: TimelineItem[]): string[] => {
+    const ids: string[] = [];
+    for (const item of items) {
+      if (item.type === 'drill') {
+        ids.push(item.drillId);
+      } else {
+        for (const group of item.groups) {
+          ids.push(...collectDrillIds(group.items));
+        }
+      }
+    }
+    return ids;
+  };
+  
+  const drillIds = [...new Set(collectDrillIds(normalizedPlan.timeline))];
+  
+  // Fetch all drills at once
+  const drills = await getDrillsByIds(drillIds);
+  const drillsMap = new Map(drills.map(d => [d.id!, d]));
+  
+  // Refresh the timeline with fresh drill data
+  const refreshedTimeline = await refreshTimelineItems(normalizedPlan.timeline, drillsMap);
+  
+  // Also refresh legacy drills array if present
+  const refreshedDrills = normalizedPlan.drills?.map(d => {
+    const freshDrill = drillsMap.get(d.drillId);
+    if (freshDrill) {
+      return { ...d, drill: freshDrill };
+    }
+    return d;
+  });
+  
+  return {
+    ...normalizedPlan,
+    timeline: refreshedTimeline,
+    drills: refreshedDrills || [],
+  };
+}
+
+// ============================================
+// Seed Data
+// ============================================
+
+export const seedDrills: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>[] = [
   {
     name: 'Setup Ice and Warm Ups',
     category: 'Admin',
@@ -80,8 +514,6 @@ export const seedDrills: Omit<Drill, 'id'>[] = [
     description: 'Administrative time for ice setup and player warm-ups',
     videoLink: '',
     pdfLink: '',
-    createdAt: new Date(),
-    updatedAt: new Date(),
   },
   {
     name: 'Warm-up Skating',
@@ -97,8 +529,6 @@ export const seedDrills: Omit<Drill, 'id'>[] = [
     description: 'Basic warm-up skating drill to get blood flowing',
     videoLink: '',
     pdfLink: '',
-    createdAt: new Date(),
-    updatedAt: new Date(),
   },
   {
     name: 'Two-Line Passing',
@@ -114,8 +544,6 @@ export const seedDrills: Omit<Drill, 'id'>[] = [
     description: 'Classic passing drill for all skill levels',
     videoLink: '',
     pdfLink: '',
-    createdAt: new Date(),
-    updatedAt: new Date(),
   },
   {
     name: 'Shooting Stations',
@@ -131,8 +559,6 @@ export const seedDrills: Omit<Drill, 'id'>[] = [
     description: 'Multi-station shooting drill for comprehensive shooting practice',
     videoLink: '',
     pdfLink: '',
-    createdAt: new Date(),
-    updatedAt: new Date(),
   },
   {
     name: 'Box Drill',
@@ -148,8 +574,6 @@ export const seedDrills: Omit<Drill, 'id'>[] = [
     description: 'Defensive positioning drill emphasizing gap control',
     videoLink: '',
     pdfLink: '',
-    createdAt: new Date(),
-    updatedAt: new Date(),
   },
   {
     name: '2-on-1 Rush',
@@ -165,8 +589,6 @@ export const seedDrills: Omit<Drill, 'id'>[] = [
     description: 'Classic odd-man rush drill for offensive creativity',
     videoLink: '',
     pdfLink: '',
-    createdAt: new Date(),
-    updatedAt: new Date(),
   },
   {
     name: 'Figure 8 Skating',
@@ -182,8 +604,6 @@ export const seedDrills: Omit<Drill, 'id'>[] = [
     description: 'Edge work and crossover development drill',
     videoLink: '',
     pdfLink: '',
-    createdAt: new Date(),
-    updatedAt: new Date(),
   },
   {
     name: 'Tire Agility Course',
@@ -199,8 +619,6 @@ export const seedDrills: Omit<Drill, 'id'>[] = [
     description: 'Agility drill using tires for footwork development',
     videoLink: '',
     pdfLink: '',
-    createdAt: new Date(),
-    updatedAt: new Date(),
   },
   {
     name: 'Border Patrol Passing',
@@ -216,14 +634,27 @@ export const seedDrills: Omit<Drill, 'id'>[] = [
     description: 'Passing drill using barriers to create realistic lanes',
     videoLink: '',
     pdfLink: '',
-    createdAt: new Date(),
-    updatedAt: new Date(),
   },
 ];
 
-export async function initializeDatabase() {
-  const count = await db.drills.count();
-  if (count === 0) {
-    await db.drills.bulkAdd(seedDrills);
+// Initialize database with seed data if empty
+export async function initializeDatabase(): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    console.warn('Supabase not configured, skipping database initialization');
+    return;
+  }
+  
+  try {
+    const count = await getDrillsCount();
+    if (count === 0) {
+      console.log('Seeding database with initial drills...');
+      for (const drill of seedDrills) {
+        await createDrill(drill);
+      }
+      console.log('Database seeded successfully!');
+    }
+  } catch (error) {
+    console.error('Error initializing database:', error);
+    throw error;
   }
 }
