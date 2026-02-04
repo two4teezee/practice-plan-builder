@@ -203,3 +203,81 @@ DROP POLICY IF EXISTS "Approved users can delete practice_plans" ON practice_pla
 CREATE POLICY "Approved users can delete practice_plans" ON practice_plans
   FOR DELETE
   USING (is_approved_user());
+
+-- ============================================
+-- Seed Data (inserted bypassing RLS since this runs as admin)
+-- ============================================
+
+INSERT INTO drills (name, category, duration, skill_focus, objective, setup, execution, coaching_points, variations, equipment, description)
+VALUES 
+  ('Setup Ice and Warm Ups', 'Admin', '2:00', 'Other', 
+   'Set up equipment on ice while players warm up',
+   'Coaches set up cones, nets, and other equipment',
+   'Players do light skating and stretching while coaches prepare the ice',
+   'Use this time efficiently to set up for the first drill',
+   '', '', 'Administrative time for ice setup and player warm-ups'),
+   
+  ('Warm-up Skating', 'Skating', '5:00', 'Skating',
+   'Get players warmed up and ready for practice',
+   'Players line up on the goal line',
+   'Skate around the rink with various skating techniques: forward, backward, crossovers',
+   'Focus on proper skating form, knee bend, and arm movement',
+   'Add puck handling, increase speed, add stops and starts',
+   '', 'Basic warm-up skating drill to get blood flowing'),
+   
+  ('Two-Line Passing', 'Passing', '10:00', 'Passing',
+   'Improve passing accuracy and receiving skills',
+   'Two lines facing each other at center ice, 20 feet apart',
+   'Pass back and forth, focusing on tape-to-tape passes',
+   'Cup the puck on reception, follow through on passes, eyes up',
+   'Increase distance, add movement, use saucer passes',
+   '', 'Classic passing drill for all skill levels'),
+   
+  ('Shooting Stations', 'Shooting', '15:00', 'Shooting',
+   'Practice various shot types from different positions',
+   'Set up 4 stations around the offensive zone with puck piles',
+   'Rotate through stations taking wrist shots, slap shots, snap shots, and one-timers',
+   'Quick release, pick corners, follow through toward target',
+   'Add defenders, time limit per station, competition between groups',
+   '4 Cones, 2 Nets, Shooter Tutor', 'Multi-station shooting drill for comprehensive shooting practice'),
+   
+  ('Box Drill', 'Defensive', '8:00', 'Defensive',
+   'Practice defensive positioning and gap control',
+   'Create a box with 4 cones in the neutral zone',
+   'Defender skates backward maintaining proper gap while attacker tries to enter the box',
+   'Stay between attacker and net, stick on ice, active feet',
+   'Add second attacker, allow breakouts, add puck',
+   '4 Cones', 'Defensive positioning drill emphasizing gap control'),
+   
+  ('2-on-1 Rush', 'Offensive', '12:00', 'Offensive',
+   'Practice 2-on-1 situations with quick decision making',
+   'Two lines at center ice, one defender at blue line',
+   'Two forwards attack against one defender, focus on give-and-go or shot',
+   'Read the defender, make quick decisions, shoot if lane is open',
+   '3-on-2, add backchecker, start from different positions',
+   'Nets', 'Classic odd-man rush drill for offensive creativity'),
+   
+  ('Figure 8 Skating', 'Skating', '6:00', 'Skating',
+   'Improve edge work and crossovers',
+   'Place two cones 30 feet apart at center ice',
+   'Skate figure 8 patterns around the cones using crossovers',
+   'Deep knee bend on crossovers, push with both edges, keep head up',
+   'Add puck, change direction, increase speed',
+   '2 Cones', 'Edge work and crossover development drill'),
+   
+  ('Tire Agility Course', 'Skating', '8:00', 'Skating',
+   'Improve agility, balance, and quick feet',
+   'Set up tires in a zigzag pattern across the ice',
+   'Players skate through the tires, stepping over and around them',
+   'Keep knees bent, quick feet, stay low',
+   'Add puck, race format, backwards skating',
+   '6 Tires, 4 Cones', 'Agility drill using tires for footwork development'),
+   
+  ('Border Patrol Passing', 'Passing', '10:00', 'Passing',
+   'Improve passing accuracy under pressure',
+   'Set up border patrol barriers creating passing lanes',
+   'Players must pass through the barriers to teammates',
+   'Accurate passes, read the lanes, quick decisions',
+   'Add defenders, time pressure, moving targets',
+   '2 Border Patrol, 4 Cones', 'Passing drill using barriers to create realistic lanes')
+ON CONFLICT DO NOTHING;
