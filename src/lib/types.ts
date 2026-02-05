@@ -1,6 +1,13 @@
-export type DrillCategory = 'Admin' | 'Skating' | 'Shooting' | 'Passing' | 'Defensive' | 'Offensive' | 'Goalie' | 'Scrimmage' | 'Other';
+export type DrillCategory = 'Admin' | 'Conditioning' | 'Skating' | 'Shooting' | 'Passing' | 'Defensive' | 'Offensive' | 'Goalie' | 'Small Game' | 'Scrimmage' | 'Other';
 export type SkillFocus = 'Skating' | 'Shooting' | 'Passing' | 'Defensive' | 'Offensive' | 'Other';
 export type PracticeDuration = '30 minutes' | '45 minutes' | '50 minutes' | '60 minutes' | '75 minutes' | '90 minutes';
+
+// User reference for audit trail (lightweight profile info)
+export interface UserReference {
+  id: string;
+  fullName?: string;
+  email?: string;
+}
 
 export interface Drill {
   id?: string; // UUID from Supabase
@@ -18,8 +25,11 @@ export interface Drill {
   videoLink: string;
   pdfLink: string;
   sketchData?: string; // JSON string containing sketch strokes and rink view
+  tags: string[]; // Array of tag names
   createdAt: Date;
   updatedAt: Date;
+  createdBy?: UserReference | null;  // Who created the drill
+  updatedBy?: UserReference | null;  // Who last modified the drill
 }
 
 export interface PracticePlanDrill {
@@ -250,7 +260,7 @@ export interface PracticePlan {
   updatedAt: Date;
 }
 
-export const DRILL_CATEGORIES: DrillCategory[] = ['Admin', 'Skating', 'Shooting', 'Passing', 'Defensive', 'Offensive', 'Goalie', 'Scrimmage', 'Other'];
+export const DRILL_CATEGORIES: DrillCategory[] = ['Admin', 'Conditioning', 'Skating', 'Shooting', 'Passing', 'Defensive', 'Offensive', 'Goalie', 'Small Game', 'Scrimmage', 'Other'];
 
 // Equipment options for drills
 export const EQUIPMENT_OPTIONS = [
@@ -316,3 +326,71 @@ export const DRILL_DURATIONS: string[] = Array.from({ length: 60 }, (_, i) => {
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 });
+
+// Drill tags organized by category
+export const DRILL_TAG_CATEGORIES = {
+  'Practice Structure': ['Warmup', 'Cooldown', 'Admin'],
+  'Skating': ['Skating', 'Edges', 'Speed', 'Agility', 'Acceleration', 'Balance', 'Crossover', 'Stops', 'Starts', 'Lateral'],
+  'Puck Skills': ['Puckhandling', 'Passing', 'Receiving', 'Shooting', 'Scoring', 'Finishing'],
+  'Shooting Details': ['Rebounds', 'Deflections', 'Screens', 'Tips'],
+  'Game Situations': ['Battles', 'Small Area', 'Small Game', 'Contact', 'Compete', 'Possession'],
+  'Team Systems': ['Breakouts', 'Regroups', 'Transitions', 'Entries', 'Forecheck', 'Backcheck', 'Coverage'],
+  'Offensive Play': ['Offensive Play', 'Offense', 'Cycling', 'Netfront', 'Spacing', 'Rush', 'Cycle', 'Cornerplay', 'Wallplay', 'Support', 'Quickstrike'],
+  'Defensive Play': ['Defensive Play', 'Defense', 'Angling', 'Containment', 'Gap Control', 'Transition Defense', 'Pressure', 'Counterattack'],
+  'Special Teams': ['Special Teams', 'Powerplay', 'Penalty Kill'],
+  'Conditioning': ['Conditioning', 'Endurance', 'Sprint'],
+  'Goalie': ['Rebound Control', 'Goalie Puckhandling', 'Post Play', 'Puck Tracking','Recovery'],
+  'Tactical': ['Deception', 'Vision', 'Timing', 'Awareness', 'Communication', 'Decision Making'],
+  'Ice Layout': ['Full Ice', 'Half Ice', 'Station Based', 'Neutralzone', 'Offensive Zone', 'Defensive Zone', 'Dzone'],
+  'Player Numbers': ['1v0', '1v1', '2v1', '2v2', '3v2', '3v3', '4v4', '5v5'],
+  'Positions': ['Forwards', 'Defensemen', 'Centers', 'Wingers'],
+  'Equipment': ['Pucks', 'Cones', 'Tires', 'Pads', 'Gates', 'Obstacle'],
+  'Skill Level': ['Beginner', 'Intermediate', 'Advanced', 'Expert'],
+  'Age Group': ['U8', 'U10', 'U12', 'U14', 'U16', 'U18', 'Adult'],
+  'Tempo': ['Low Tempo', 'Medium Tempo', 'High Tempo'],
+  'Constraints': ['No Sticks', 'One Touch', 'Time Limit', 'Shot Limit', 'Pass Limit'],
+} as const;
+
+// Flat list of all tags (derived from categories for backwards compatibility)
+export const DRILL_TAGS = Object.values(DRILL_TAG_CATEGORIES).flat();
+
+// Category names for iteration
+export const DRILL_TAG_CATEGORY_NAMES = Object.keys(DRILL_TAG_CATEGORIES) as (keyof typeof DRILL_TAG_CATEGORIES)[];
+
+export type DrillTagCategory = keyof typeof DRILL_TAG_CATEGORIES;
+export type DrillTag = (typeof DRILL_TAG_CATEGORIES)[DrillTagCategory][number];
+
+// Color classes for tag categories (matching the category pill styling pattern)
+export const TAG_CATEGORY_COLORS: Record<DrillTagCategory, string> = {
+  'Practice Structure': 'bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-400',
+  'Skating': 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  'Puck Skills': 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  'Shooting Details': 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  'Game Situations': 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  'Team Systems': 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400',
+  'Offensive Play': 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+  'Defensive Play': 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
+  'Special Teams': 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400',
+  'Conditioning': 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400',
+  'Goalie': 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+  'Tactical': 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400',
+  'Ice Layout': 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400',
+  'Player Numbers': 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400',
+  'Positions': 'bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/30 dark:text-fuchsia-400',
+  'Equipment': 'bg-stone-100 text-stone-700 dark:bg-stone-900/30 dark:text-stone-400',
+  'Skill Level': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+  'Age Group': 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400',
+  'Tempo': 'bg-lime-100 text-lime-700 dark:bg-lime-900/30 dark:text-lime-400',
+  'Constraints': 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400',
+};
+
+// Helper to get color classes for a tag based on its category
+export function getTagColor(tag: string): string {
+  for (const [category, tags] of Object.entries(DRILL_TAG_CATEGORIES)) {
+    if ((tags as readonly string[]).includes(tag)) {
+      return TAG_CATEGORY_COLORS[category as DrillTagCategory];
+    }
+  }
+  // Default fallback color
+  return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400';
+}

@@ -86,9 +86,25 @@ CREATE TABLE IF NOT EXISTS drills (
   video_link TEXT DEFAULT '',
   pdf_link TEXT DEFAULT '',
   sketch_data TEXT,
+  tags JSONB DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migration: Add tags column to existing drills table
+ALTER TABLE drills ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]'::jsonb;
+
+-- Migration: Add audit columns for tracking who created/modified drills
+ALTER TABLE drills ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES profiles(id) ON DELETE SET NULL;
+ALTER TABLE drills ADD COLUMN IF NOT EXISTS updated_by UUID REFERENCES profiles(id) ON DELETE SET NULL;
+
+-- Index for audit column lookups
+CREATE INDEX IF NOT EXISTS idx_drills_created_by ON drills(created_by);
+CREATE INDEX IF NOT EXISTS idx_drills_updated_by ON drills(updated_by);
+
+-- Migration: Drop deprecated level column (now handled via tags)
+-- Note: Run this only if you want to remove the level column from existing databases
+-- ALTER TABLE drills DROP COLUMN IF EXISTS level;
 
 -- Practice Plans table
 CREATE TABLE IF NOT EXISTS practice_plans (
@@ -110,6 +126,7 @@ CREATE TABLE IF NOT EXISTS practice_plans (
 CREATE INDEX IF NOT EXISTS idx_drills_name ON drills(name);
 CREATE INDEX IF NOT EXISTS idx_drills_category ON drills(category);
 CREATE INDEX IF NOT EXISTS idx_drills_created_at ON drills(created_at);
+CREATE INDEX IF NOT EXISTS idx_drills_tags ON drills USING GIN(tags);
 CREATE INDEX IF NOT EXISTS idx_practice_plans_name ON practice_plans(name);
 CREATE INDEX IF NOT EXISTS idx_practice_plans_date ON practice_plans(date);
 CREATE INDEX IF NOT EXISTS idx_practice_plans_created_at ON practice_plans(created_at);
@@ -155,6 +172,12 @@ BEGIN
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Approved users can read all profiles (for displaying creator/modifier names in audit info)
+DROP POLICY IF EXISTS "Approved users can view all profiles" ON profiles;
+CREATE POLICY "Approved users can view all profiles" ON profiles
+  FOR SELECT
+  USING (is_approved_user());
 
 -- Drills policies: only approved users can read/write
 DROP POLICY IF EXISTS "Allow all operations on drills" ON drills;

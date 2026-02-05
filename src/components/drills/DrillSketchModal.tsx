@@ -14,10 +14,11 @@ interface DrillSketchModalProps {
 
 type RinkView = 'full' | 'half';
 type LineColor = 'blue' | 'red' | 'black' | 'gray';
-type LineType = 'solid' | 'dashed' | 'dotted' | 'squiggly';
+type LineType = 'solid' | 'dashed' | 'double' | 'squiggly';
 type DrawMode = 'freehand' | 'line' | 'curve' | 'polyline';
-type PlaceableType = 'player' | 'cone' | 'net' | 'smallNet';
-type PlayerColor = 'blue' | 'red' | 'gray';
+type PlaceableType = 'player' | 'cone' | 'net' | 'smallNet' | 'pucks';
+type PlayerColor = 'blue' | 'red' | 'black' | 'gray';
+type PlayerMarkerType = 'plain' | 'numbered' | 'F' | 'D' | 'G' | 'Fx' | 'Dx' | 'Xx' | 'Ox';
 
 interface Point {
   x: number;
@@ -38,8 +39,11 @@ interface PlacedObject {
   type: PlaceableType;
   x: number;
   y: number;
-  playerNumber?: number; // 1-5 for player type
-  playerColor?: PlayerColor; // blue or red for player type
+  playerNumber?: number; // Legacy: 1-5 for player type, 0 for coach
+  playerColor?: PlayerColor; // blue, red, black, or gray for player type
+  playerMarkerType?: PlayerMarkerType; // New: type of marker (plain, numbered, F, D, G, Fx, Dx, Xx, Ox)
+  playerSequence?: number; // For auto-numbered types (numbered, Fx, Dx, Xx, Ox)
+  puckOffsets?: Array<{ dx: number; dy: number }>; // Random offsets for puck pile
 }
 
 const COLOR_MAP: Record<LineColor, string> = {
@@ -85,8 +89,12 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
   const [placedObjects, setPlacedObjects] = useState<PlacedObject[]>([]);
   const [isPlaceMode, setIsPlaceMode] = useState(false);
   const [placeableType, setPlaceableType] = useState<PlaceableType>('player');
-  const [playerNumber, setPlayerNumber] = useState<number>(1);
   const [playerColor, setPlayerColor] = useState<PlayerColor>('blue');
+  const [playerMarkerType, setPlayerMarkerType] = useState<PlayerMarkerType>('numbered');
+  
+  // Auto-increment counters for each color and marker type
+  // Key format: "color-markerType" e.g., "blue-numbered", "red-Fx"
+  const [markerCounters, setMarkerCounters] = useState<Record<string, number>>({});
   
   // Selection state
   const [isSelectMode, setIsSelectMode] = useState(false);
@@ -100,8 +108,8 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
   // Canvas dimensions - maintain proper NHL aspect ratios
   // Full rink: 200 x 85 ft = 2.35:1 ratio
   // Half rink: ~80 x 85 ft (goal line to past blue line) = ~0.94:1 ratio
-  const CANVAS_WIDTH_FULL = 800;
-  const CANVAS_HEIGHT_FULL = Math.round(800 * (NHL.rinkWidth / NHL.rinkLength)); // ~340px
+  const CANVAS_WIDTH_FULL = 1000; // Wider for better visibility
+  const CANVAS_HEIGHT_FULL = Math.round(1000 * (NHL.rinkWidth / NHL.rinkLength)); // ~425px
   const CANVAS_WIDTH_HALF = 550; // Smaller width to fit in modal
   const CANVAS_HEIGHT_HALF = Math.round(550 * (80 / NHL.rinkWidth)); // ~518px, maintains proper aspect
   
@@ -121,11 +129,26 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         }
         if (data.placedObjects) {
           setPlacedObjects(data.placedObjects);
+          
+          // Reconstruct marker counters from placed objects
+          const counters: Record<string, number> = {};
+          const autoNumberedTypes: PlayerMarkerType[] = ['numbered', 'Fx', 'Dx', 'Xx', 'Ox'];
+          
+          for (const obj of data.placedObjects as PlacedObject[]) {
+            if (obj.type === 'player' && obj.playerMarkerType && obj.playerSequence) {
+              if (autoNumberedTypes.includes(obj.playerMarkerType)) {
+                const key = `${obj.playerColor}-${obj.playerMarkerType}`;
+                counters[key] = Math.max(counters[key] || 0, obj.playerSequence);
+              }
+            }
+          }
+          setMarkerCounters(counters);
         }
       } catch {
         // Invalid data, start fresh
         setStrokes([]);
         setPlacedObjects([]);
+        setMarkerCounters({});
       }
     }
   }, [initialSketchData, isOpen]);
@@ -605,6 +628,31 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     ctx.restore();
   }, []);
 
+  // Helper to draw a larger arrowhead for double lines
+  const drawLargeArrowheadAtAngle = useCallback((ctx: CanvasRenderingContext2D, endPoint: Point, angle: number, color: string) => {
+    const headLength = 16;
+    const headAngle = Math.PI / 5; // Wider angle for larger arrowhead
+    
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    
+    ctx.beginPath();
+    ctx.moveTo(endPoint.x, endPoint.y);
+    ctx.lineTo(
+      endPoint.x - headLength * Math.cos(angle - headAngle),
+      endPoint.y - headLength * Math.sin(angle - headAngle)
+    );
+    ctx.lineTo(
+      endPoint.x - headLength * Math.cos(angle + headAngle),
+      endPoint.y - headLength * Math.sin(angle + headAngle)
+    );
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }, []);
+
   // Helper to draw a squiggly line along a path of points with consistent wavelength
   const drawSquigglyPath = useCallback((ctx: CanvasRenderingContext2D, points: Point[]) => {
     if (points.length < 2) return;
@@ -676,6 +724,110 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     drawSquigglyPath(ctx, [{ x: x1, y: y1 }, { x: x2, y: y2 }]);
   }, [drawSquigglyPath]);
 
+  // Helper to draw a double line path (two parallel lines)
+  const drawDoublePath = useCallback((ctx: CanvasRenderingContext2D, points: Point[], lineWidth: number, trimEnd: number = 16) => {
+    if (points.length < 2) return;
+    
+    const offset = lineWidth + 1; // Gap between the two lines
+    
+    // Trim points from the end to stop before arrowhead
+    let trimmedPoints = points;
+    if (trimEnd > 0 && points.length >= 2) {
+      // Calculate total length from the end and find where to trim
+      let accumulatedLength = 0;
+      let trimIndex = points.length - 1;
+      let trimT = 1;
+      
+      for (let i = points.length - 1; i > 0; i--) {
+        const dx = points[i].x - points[i - 1].x;
+        const dy = points[i].y - points[i - 1].y;
+        const segmentLength = Math.sqrt(dx * dx + dy * dy);
+        
+        if (accumulatedLength + segmentLength >= trimEnd) {
+          // Trim within this segment
+          const remaining = trimEnd - accumulatedLength;
+          trimT = 1 - remaining / segmentLength;
+          trimIndex = i;
+          break;
+        }
+        accumulatedLength += segmentLength;
+        trimIndex = i - 1;
+      }
+      
+      // Create trimmed path
+      if (trimIndex < points.length - 1 || trimT < 1) {
+        trimmedPoints = points.slice(0, trimIndex);
+        if (trimIndex > 0 && trimIndex < points.length) {
+          const prevPoint = points[trimIndex - 1];
+          const currPoint = points[trimIndex];
+          trimmedPoints.push({
+            x: prevPoint.x + (currPoint.x - prevPoint.x) * trimT,
+            y: prevPoint.y + (currPoint.y - prevPoint.y) * trimT,
+          });
+        }
+      }
+    }
+    
+    if (trimmedPoints.length < 2) return;
+    
+    // For each segment, calculate perpendicular offset
+    const getOffsetPoints = (pts: Point[], offsetDir: number): Point[] => {
+      const result: Point[] = [];
+      for (let i = 0; i < pts.length; i++) {
+        let perpX = 0, perpY = 0;
+        if (i === 0 && pts.length > 1) {
+          const dx = pts[1].x - pts[0].x;
+          const dy = pts[1].y - pts[0].y;
+          const len = Math.sqrt(dx * dx + dy * dy) || 1;
+          perpX = -dy / len;
+          perpY = dx / len;
+        } else if (i === pts.length - 1 && pts.length > 1) {
+          const dx = pts[i].x - pts[i - 1].x;
+          const dy = pts[i].y - pts[i - 1].y;
+          const len = Math.sqrt(dx * dx + dy * dy) || 1;
+          perpX = -dy / len;
+          perpY = dx / len;
+        } else if (pts.length > 2) {
+          // Average of adjacent segments
+          const dx1 = pts[i].x - pts[i - 1].x;
+          const dy1 = pts[i].y - pts[i - 1].y;
+          const dx2 = pts[i + 1].x - pts[i].x;
+          const dy2 = pts[i + 1].y - pts[i].y;
+          const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1) || 1;
+          const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
+          perpX = (-dy1 / len1 - dy2 / len2) / 2;
+          perpY = (dx1 / len1 + dx2 / len2) / 2;
+          const perpLen = Math.sqrt(perpX * perpX + perpY * perpY) || 1;
+          perpX /= perpLen;
+          perpY /= perpLen;
+        }
+        result.push({
+          x: pts[i].x + perpX * offset * offsetDir,
+          y: pts[i].y + perpY * offset * offsetDir,
+        });
+      }
+      return result;
+    };
+    
+    // Draw first line (offset one way)
+    const line1 = getOffsetPoints(trimmedPoints, 0.5);
+    ctx.beginPath();
+    ctx.moveTo(line1[0].x, line1[0].y);
+    for (let i = 1; i < line1.length; i++) {
+      ctx.lineTo(line1[i].x, line1[i].y);
+    }
+    ctx.stroke();
+    
+    // Draw second line (offset other way)
+    const line2 = getOffsetPoints(trimmedPoints, -0.5);
+    ctx.beginPath();
+    ctx.moveTo(line2[0].x, line2[0].y);
+    for (let i = 1; i < line2.length; i++) {
+      ctx.lineTo(line2[i].x, line2[i].y);
+    }
+    ctx.stroke();
+  }, []);
+
   // Draw all strokes
   const drawStrokes = useCallback((ctx: CanvasRenderingContext2D, strokesToDraw: Stroke[], selectedId: string | null) => {
     strokesToDraw.forEach(stroke => {
@@ -709,8 +861,6 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       
       if (stroke.lineType === 'dashed') {
         ctx.setLineDash([10, 5]);
-      } else if (stroke.lineType === 'dotted') {
-        ctx.setLineDash([2, 4]);
       } else {
         ctx.setLineDash([]);
       }
@@ -720,6 +870,8 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         // Straight line mode
         if (stroke.lineType === 'squiggly') {
           drawSquigglyLine(ctx, stroke.points[0].x, stroke.points[0].y, stroke.points[1].x, stroke.points[1].y);
+        } else if (stroke.lineType === 'double') {
+          drawDoublePath(ctx, stroke.points, stroke.lineWidth);
         } else {
           ctx.beginPath();
           ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
@@ -727,8 +879,8 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           ctx.stroke();
         }
       } else if (stroke.drawMode === 'curve' && stroke.points.length === 3) {
-        // Curved line mode - sample curve into points for squiggly
-        if (stroke.lineType === 'squiggly') {
+        // Curved line mode - sample curve into points for squiggly/double
+        if (stroke.lineType === 'squiggly' || stroke.lineType === 'double') {
           const curvePoints: Point[] = [];
           const segments = 20;
           for (let i = 0; i <= segments; i++) {
@@ -738,7 +890,11 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
               y: (1-t)*(1-t)*stroke.points[0].y + 2*(1-t)*t*stroke.points[1].y + t*t*stroke.points[2].y,
             });
           }
-          drawSquigglyPath(ctx, curvePoints);
+          if (stroke.lineType === 'squiggly') {
+            drawSquigglyPath(ctx, curvePoints);
+          } else {
+            drawDoublePath(ctx, curvePoints, stroke.lineWidth);
+          }
         } else {
           ctx.beginPath();
           ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
@@ -749,6 +905,8 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         // Polyline mode - connected line segments
         if (stroke.lineType === 'squiggly') {
           drawSquigglyPath(ctx, stroke.points);
+        } else if (stroke.lineType === 'double') {
+          drawDoublePath(ctx, stroke.points, stroke.lineWidth);
         } else {
           ctx.beginPath();
           ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
@@ -761,6 +919,8 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         // Freehand mode
         if (stroke.lineType === 'squiggly') {
           drawSquigglyPath(ctx, stroke.points);
+        } else if (stroke.lineType === 'double') {
+          drawDoublePath(ctx, stroke.points, stroke.lineWidth);
         } else {
           ctx.beginPath();
           ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
@@ -798,9 +958,14 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         arrowEndPoint = result.endPoint;
       }
       
-      drawArrowheadAtAngle(ctx, arrowEndPoint, arrowAngle, stroke.color);
+      // For double lines, draw a larger arrowhead
+      if (stroke.lineType === 'double') {
+        drawLargeArrowheadAtAngle(ctx, arrowEndPoint, arrowAngle, stroke.color);
+      } else {
+        drawArrowheadAtAngle(ctx, arrowEndPoint, arrowAngle, stroke.color);
+      }
     });
-  }, [drawSquigglyLine, drawSquigglyPath, getAverageEndDirection, drawArrowheadAtAngle]);
+  }, [drawSquigglyLine, drawSquigglyPath, drawDoublePath, getAverageEndDirection, drawArrowheadAtAngle, drawLargeArrowheadAtAngle]);
 
   // Helper to calculate distance from point to line segment
   const distanceToSegment = useCallback((point: Point, p1: Point, p2: Point): number => {
@@ -852,7 +1017,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       const dy = point.y - obj.y;
       
       if (obj.type === 'player') {
-        const radius = 12;
+        const radius = 16;
         if (dx * dx + dy * dy <= radius * radius) return obj.id;
       } else if (obj.type === 'cone') {
         const hitRadius = 12;
@@ -863,6 +1028,9 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       } else if (obj.type === 'smallNet') {
         const width = 18, height = 12;
         if (Math.abs(dx) <= width / 2 && Math.abs(dy) <= height / 2) return obj.id;
+      } else if (obj.type === 'pucks') {
+        const hitRadius = 14;
+        if (dx * dx + dy * dy <= hitRadius * hitRadius) return obj.id;
       }
     }
     return null;
@@ -883,7 +1051,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         
         if (obj.type === 'player') {
           ctx.beginPath();
-          ctx.arc(obj.x, obj.y, 18, 0, Math.PI * 2);
+          ctx.arc(obj.x, obj.y, 22, 0, Math.PI * 2);
           ctx.stroke();
         } else if (obj.type === 'cone') {
           ctx.beginPath();
@@ -893,14 +1061,31 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           ctx.strokeRect(obj.x - 18, obj.y - 13, 36, 26);
         } else if (obj.type === 'smallNet') {
           ctx.strokeRect(obj.x - 12, obj.y - 9, 24, 18);
+        } else if (obj.type === 'pucks') {
+          ctx.beginPath();
+          ctx.arc(obj.x, obj.y, 18, 0, Math.PI * 2);
+          ctx.stroke();
         }
         ctx.setLineDash([]);
       }
       
       if (obj.type === 'player') {
-        // Draw numbered player circle (matching selection bar size ~14px radius)
-        const radius = 12;
-        const color = obj.playerColor === 'red' ? '#DC2626' : obj.playerColor === 'gray' ? '#6B7280' : '#2563EB';
+        // Draw player circle marker
+        const radius = 16;
+        const colorMap: Record<PlayerColor, string> = {
+          blue: '#2563EB',
+          red: '#DC2626',
+          black: '#1F2937',
+          gray: '#6B7280',
+        };
+        const borderColorMap: Record<PlayerColor, string> = {
+          blue: '#1D4ED8',
+          red: '#991B1B',
+          black: '#111827',
+          gray: '#4B5563',
+        };
+        const color = colorMap[obj.playerColor || 'blue'];
+        const borderColor = borderColorMap[obj.playerColor || 'blue'];
         
         // Circle fill
         ctx.beginPath();
@@ -909,16 +1094,56 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         ctx.fill();
         
         // Circle border
-        ctx.strokeStyle = obj.playerColor === 'red' ? '#991B1B' : obj.playerColor === 'gray' ? '#4B5563' : '#1D4ED8';
+        ctx.strokeStyle = borderColor;
         ctx.lineWidth = 1.5;
         ctx.stroke();
         
-        // Number or 'C' text
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = 'bold 11px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(obj.playerNumber === 0 ? 'C' : String(obj.playerNumber || 1), obj.x, obj.y);
+        // Determine the label based on marker type
+        let label = '';
+        const markerType = obj.playerMarkerType;
+        
+        if (obj.playerColor === 'gray' || obj.playerNumber === 0) {
+          // Coach - always 'C'
+          label = 'C';
+        } else if (markerType === 'plain') {
+          // Plain - no label
+          label = '';
+        } else if (markerType === 'numbered') {
+          // Auto-numbered: 1, 2, 3...
+          label = String(obj.playerSequence || 1);
+        } else if (markerType === 'F') {
+          label = 'F';
+        } else if (markerType === 'D') {
+          label = 'D';
+        } else if (markerType === 'G') {
+          label = 'G';
+        } else if (markerType === 'Fx') {
+          label = `F${obj.playerSequence || 1}`;
+        } else if (markerType === 'Dx') {
+          label = `D${obj.playerSequence || 1}`;
+        } else if (markerType === 'Xx') {
+          label = `X${obj.playerSequence || 1}`;
+        } else if (markerType === 'Ox') {
+          label = `O${obj.playerSequence || 1}`;
+        } else if (obj.playerNumber !== undefined) {
+          // Legacy support for old data
+          if (obj.playerNumber === 0) label = 'C';
+          else if (obj.playerNumber === -1) label = 'F';
+          else if (obj.playerNumber === -2) label = 'D';
+          else if (obj.playerNumber === -3) label = 'G';
+          else label = String(obj.playerNumber);
+        }
+        
+        // Draw label text
+        if (label) {
+          ctx.fillStyle = '#FFFFFF';
+          // Adjust font size based on label length (scaled for 16px radius circles)
+          const fontSize = label.length > 2 ? 12 : label.length > 1 ? 14 : 16;
+          ctx.font = `bold ${fontSize}px Arial`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(label, obj.x, obj.y);
+        }
         
       } else if (obj.type === 'cone') {
         // Draw traffic cone
@@ -1006,6 +1231,29 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         ctx.moveTo(obj.x - width / 2, obj.y);
         ctx.lineTo(obj.x + width / 2, obj.y);
         ctx.stroke();
+        
+      } else if (obj.type === 'pucks') {
+        // Draw pile of pucks with random positions
+        const puckRadius = 4;
+        const puckColor = '#1F2937'; // Dark gray/black for pucks
+        const puckBorder = '#374151';
+        
+        // Use stored random offsets, or generate default if not present (for legacy data)
+        const offsets = obj.puckOffsets || [
+          { dx: -6, dy: 4 }, { dx: 6, dy: 4 }, { dx: 0, dy: -5 },
+          { dx: -3, dy: -2 }, { dx: 3, dy: -2 }, { dx: 0, dy: 6 },
+          { dx: -8, dy: 0 }, { dx: 8, dy: 0 },
+        ];
+        
+        offsets.forEach(offset => {
+          ctx.beginPath();
+          ctx.arc(obj.x + offset.dx, obj.y + offset.dy, puckRadius, 0, Math.PI * 2);
+          ctx.fillStyle = puckColor;
+          ctx.fill();
+          ctx.strokeStyle = puckBorder;
+          ctx.lineWidth = 0.5;
+          ctx.stroke();
+        });
       }
       
       ctx.restore();
@@ -1033,8 +1281,6 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       
       if (lineType === 'dashed') {
         ctx.setLineDash([10, 5]);
-      } else if (lineType === 'dotted') {
-        ctx.setLineDash([2, 4]);
       } else {
         ctx.setLineDash([]);
       }
@@ -1046,6 +1292,8 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         // Preview straight line
         if (lineType === 'squiggly') {
           drawSquigglyLine(ctx, currentStroke[0].x, currentStroke[0].y, currentStroke[1].x, currentStroke[1].y);
+        } else if (lineType === 'double') {
+          drawDoublePath(ctx, currentStroke, 3);
         } else {
           ctx.beginPath();
           ctx.moveTo(currentStroke[0].x, currentStroke[0].y);
@@ -1061,7 +1309,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           ctx.lineTo(currentStroke[1].x, currentStroke[1].y);
           ctx.stroke();
         } else if (currentStroke.length === 3) {
-          if (lineType === 'squiggly') {
+          if (lineType === 'squiggly' || lineType === 'double') {
             const curvePoints: Point[] = [];
             const segments = 20;
             for (let i = 0; i <= segments; i++) {
@@ -1071,7 +1319,11 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                 y: (1-t)*(1-t)*currentStroke[0].y + 2*(1-t)*t*currentStroke[1].y + t*t*currentStroke[2].y,
               });
             }
-            drawSquigglyPath(ctx, curvePoints);
+            if (lineType === 'squiggly') {
+              drawSquigglyPath(ctx, curvePoints);
+            } else {
+              drawDoublePath(ctx, curvePoints, 3);
+            }
           } else {
             ctx.beginPath();
             ctx.moveTo(currentStroke[0].x, currentStroke[0].y);
@@ -1096,6 +1348,8 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         // Polyline or Freehand preview
         if (lineType === 'squiggly') {
           drawSquigglyPath(ctx, currentStroke);
+        } else if (lineType === 'double') {
+          drawDoublePath(ctx, currentStroke, 3);
         } else {
           ctx.beginPath();
           ctx.moveTo(currentStroke[0].x, currentStroke[0].y);
@@ -1114,7 +1368,11 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       
       // Draw arrowhead on preview
       if (previewArrowEndPoint && previewArrowAngle !== null) {
-        drawArrowheadAtAngle(ctx, previewArrowEndPoint, previewArrowAngle, COLOR_MAP[lineColor]);
+        if (lineType === 'double') {
+          drawLargeArrowheadAtAngle(ctx, previewArrowEndPoint, previewArrowAngle, COLOR_MAP[lineColor]);
+        } else {
+          drawArrowheadAtAngle(ctx, previewArrowEndPoint, previewArrowAngle, COLOR_MAP[lineColor]);
+        }
       }
     }
     
@@ -1143,7 +1401,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         ctx.fill();
       });
     }
-  }, [canvasWidth, canvasHeight, rinkView, strokes, currentStroke, lineColor, lineType, drawMode, lineStartPoint, curvePoints, polylinePoints, placedObjects, selectedObjectId, selectedStrokeId, drawRink, drawStrokes, drawPlacedObjects, drawSquigglyLine, drawSquigglyPath, getAverageEndDirection, drawArrowheadAtAngle]);
+  }, [canvasWidth, canvasHeight, rinkView, strokes, currentStroke, lineColor, lineType, drawMode, lineStartPoint, curvePoints, polylinePoints, placedObjects, selectedObjectId, selectedStrokeId, drawRink, drawStrokes, drawPlacedObjects, drawSquigglyLine, drawSquigglyPath, drawDoublePath, getAverageEndDirection, drawArrowheadAtAngle, drawLargeArrowheadAtAngle]);
 
   // Redraw when dependencies change
   useEffect(() => {
@@ -1235,21 +1493,51 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     
     // Handle place mode - add object to canvas
     if (isPlaceMode) {
-      const newObject: PlacedObject = {
-        id: `obj-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        type: placeableType,
-        x: point.x,
-        y: point.y,
-        ...(placeableType === 'player' && {
-          playerNumber,
+      if (placeableType === 'player') {
+        // Determine if this marker type needs auto-numbering
+        const autoNumberedTypes: PlayerMarkerType[] = ['numbered', 'Fx', 'Dx', 'Xx', 'Ox'];
+        const needsSequence = autoNumberedTypes.includes(playerMarkerType);
+        
+        // Get the counter key and next sequence number
+        const counterKey = `${playerColor}-${playerMarkerType}`;
+        const nextSequence = needsSequence ? (markerCounters[counterKey] || 0) + 1 : undefined;
+        
+        const newObject: PlacedObject = {
+          id: `obj-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          type: placeableType,
+          x: point.x,
+          y: point.y,
           playerColor,
-        }),
-      };
-      setPlacedObjects(prev => [...prev, newObject]);
-      
-      // Auto-increment player number after placing (1->2->3->4->5), skip for coach (C)
-      if (placeableType === 'player' && playerNumber > 0 && playerNumber < 5) {
-        setPlayerNumber(playerNumber + 1);
+          playerMarkerType,
+          playerSequence: nextSequence,
+          // Keep playerNumber for legacy/coach support
+          playerNumber: playerColor === 'gray' ? 0 : undefined,
+        };
+        setPlacedObjects(prev => [...prev, newObject]);
+        
+        // Update counter for auto-numbered types
+        if (needsSequence && nextSequence !== undefined) {
+          setMarkerCounters(prev => ({
+            ...prev,
+            [counterKey]: nextSequence,
+          }));
+        }
+      } else {
+        // Non-player objects (cone, net, smallNet, pucks)
+        const newObject: PlacedObject = {
+          id: `obj-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          type: placeableType,
+          x: point.x,
+          y: point.y,
+          // Generate random puck offsets for pucks type
+          ...(placeableType === 'pucks' && {
+            puckOffsets: Array.from({ length: 8 + Math.floor(Math.random() * 5) }, () => ({
+              dx: (Math.random() - 0.5) * 20,
+              dy: (Math.random() - 0.5) * 20,
+            })),
+          }),
+        };
+        setPlacedObjects(prev => [...prev, newObject]);
       }
       return;
     }
@@ -1510,6 +1798,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     setPlacedObjects([]);
     setSelectedObjectId(null);
     setSelectedStrokeId(null);
+    setMarkerCounters({});
   };
 
   const handleSave = () => {
@@ -1548,7 +1837,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
   const lineTypeButtons: { type: LineType; label: string }[] = [
     { type: 'solid', label: 'Solid' },
     { type: 'dashed', label: 'Dashed' },
-    { type: 'dotted', label: 'Dotted' },
+    { type: 'double', label: 'Double' },
     { type: 'squiggly', label: 'Squiggly' },
   ];
 
@@ -1560,7 +1849,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
   ];
 
   return (
-    <Modal isOpen={isOpen} onClose={handleCancel} title="Sketch Drill" size="xl">
+    <Modal isOpen={isOpen} onClose={handleCancel} title="Sketch Drill" size={rinkView === 'full' ? 'fullRink' : 'xl'}>
       <div className="flex gap-3">
         {/* Vertical Toolbar - Left Side (2 columns) */}
         <div className="flex flex-col gap-2 p-2 bg-gray-50 dark:bg-gray-800 rounded-lg shrink-0">
@@ -1657,9 +1946,10 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                   <svg className="w-5 h-3" viewBox="0 0 24 6" aria-hidden="true">
                     <line x1="0" y1="3" x2="24" y2="3" stroke="currentColor" strokeWidth="3" strokeDasharray="5 3" />
                   </svg>
-                ) : type === 'dotted' ? (
+                ) : type === 'double' ? (
                   <svg className="w-5 h-3" viewBox="0 0 24 6" aria-hidden="true">
-                    <line x1="0" y1="3" x2="24" y2="3" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="0.1 5" />
+                    <line x1="0" y1="1" x2="24" y2="1" stroke="currentColor" strokeWidth="1.5" />
+                    <line x1="0" y1="5" x2="24" y2="5" stroke="currentColor" strokeWidth="1.5" />
                   </svg>
                 ) : (
                   <svg className="w-5 h-3" viewBox="0 0 24 6" aria-hidden="true">
@@ -1694,64 +1984,59 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           {/* Divider */}
           <div className="h-px w-full bg-gray-300 dark:bg-gray-600" />
 
-          {/* Players - Blue and Red side by side */}
-          <div className="grid grid-cols-2 gap-1">
-            {/* Blue Players column */}
-            <div className="flex flex-col gap-0.5 items-center">
-              {[1, 2, 3, 4, 5].map(num => (
+          {/* Player Markers - Red, Blue, Black columns */}
+          <div className="grid grid-cols-3 gap-0.5">
+            {/* Column headers */}
+            {(['red', 'blue', 'black'] as const).map(color => (
+              <div key={`header-${color}`} className="flex justify-center">
+                <div 
+                  className="w-3 h-3 rounded-full" 
+                  style={{ backgroundColor: color === 'red' ? '#DC2626' : color === 'blue' ? '#2563EB' : '#1F2937' }}
+                />
+              </div>
+            ))}
+            
+            {/* Marker types for each color */}
+            {([
+              { type: 'plain' as PlayerMarkerType, label: '', title: 'Plain (no label)' },
+              { type: 'numbered' as PlayerMarkerType, label: 'x', title: 'Auto-numbered (1, 2, 3...)' },
+              { type: 'F' as PlayerMarkerType, label: 'F', title: 'Forward' },
+              { type: 'D' as PlayerMarkerType, label: 'D', title: 'Defense' },
+              { type: 'G' as PlayerMarkerType, label: 'G', title: 'Goalie' },
+              { type: 'Fx' as PlayerMarkerType, label: 'Fx', title: 'Forward numbered (F1, F2...)' },
+              { type: 'Dx' as PlayerMarkerType, label: 'Dx', title: 'Defense numbered (D1, D2...)' },
+              { type: 'Xx' as PlayerMarkerType, label: 'Xx', title: 'X numbered (X1, X2...)' },
+              { type: 'Ox' as PlayerMarkerType, label: 'Ox', title: 'O numbered (O1, O2...)' },
+            ] as const).flatMap(({ type, label, title }) => (
+              (['red', 'blue', 'black'] as const).map(color => (
                 <button
-                  key={`blue-${num}`}
+                  key={`${color}-${type}`}
                   type="button"
-                  title={`Blue Player ${num}`}
+                  title={`${color.charAt(0).toUpperCase() + color.slice(1)} ${title}`}
                   onClick={() => {
                     setIsPlaceMode(true);
                     setIsSelectMode(false);
                     setSelectedObjectId(null);
                     setSelectedStrokeId(null);
                     setPlaceableType('player');
-                    setPlayerNumber(num);
-                    setPlayerColor('blue');
+                    setPlayerColor(color);
+                    setPlayerMarkerType(type);
                   }}
                   className={`
-                    w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold transition-all
-                    ${isPlaceMode && placeableType === 'player' && playerNumber === num && playerColor === 'blue'
+                    w-5 h-5 rounded-full flex items-center justify-center text-white font-bold transition-all
+                    ${isPlaceMode && placeableType === 'player' && playerColor === color && playerMarkerType === type
                       ? 'ring-2 ring-offset-1 ring-primary-500 dark:ring-offset-gray-800'
                       : ''}
                   `}
-                  style={{ backgroundColor: '#2563EB' }}
-                >
-                  {num}
-                </button>
-              ))}
-            </div>
-            {/* Red Players column */}
-            <div className="flex flex-col gap-0.5 items-center">
-              {[1, 2, 3, 4, 5].map(num => (
-                <button
-                  key={`red-${num}`}
-                  type="button"
-                  title={`Red Player ${num}`}
-                  onClick={() => {
-                    setIsPlaceMode(true);
-                    setIsSelectMode(false);
-                    setSelectedObjectId(null);
-                    setSelectedStrokeId(null);
-                    setPlaceableType('player');
-                    setPlayerNumber(num);
-                    setPlayerColor('red');
+                  style={{ 
+                    backgroundColor: color === 'red' ? '#DC2626' : color === 'blue' ? '#2563EB' : '#1F2937',
+                    fontSize: label.length > 1 ? '6px' : '8px',
                   }}
-                  className={`
-                    w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold transition-all
-                    ${isPlaceMode && placeableType === 'player' && playerNumber === num && playerColor === 'red'
-                      ? 'ring-2 ring-offset-1 ring-primary-500 dark:ring-offset-gray-800'
-                      : ''}
-                  `}
-                  style={{ backgroundColor: '#DC2626' }}
                 >
-                  {num}
+                  {label}
                 </button>
-              ))}
-            </div>
+              ))
+            ))}
           </div>
 
           {/* Coach - centered */}
@@ -1765,12 +2050,12 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                 setSelectedObjectId(null);
                 setSelectedStrokeId(null);
                 setPlaceableType('player');
-                setPlayerNumber(0);
                 setPlayerColor('gray');
+                setPlayerMarkerType('plain'); // Coach uses gray with 'C' label (handled specially)
               }}
               className={`
                 w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold transition-all
-                ${isPlaceMode && placeableType === 'player' && playerNumber === 0 && playerColor === 'gray'
+                ${isPlaceMode && placeableType === 'player' && playerColor === 'gray'
                   ? 'ring-2 ring-offset-1 ring-primary-500 dark:ring-offset-gray-800'
                   : ''}
               `}
@@ -1846,7 +2131,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                 setPlaceableType('smallNet');
               }}
               className={`
-                w-8 h-8 flex items-center justify-center rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200 col-span-2 mx-auto
+                w-8 h-8 flex items-center justify-center rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
                 ${isPlaceMode && placeableType === 'smallNet'
                   ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500'
                   : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
@@ -1858,13 +2143,37 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                 <line x1="2" y1="8" x2="18" y2="8" stroke="#9CA3AF" strokeWidth="1" />
               </svg>
             </button>
+            <button
+              type="button"
+              title="Pucks"
+              onClick={() => {
+                setIsPlaceMode(true);
+                setIsSelectMode(false);
+                setSelectedObjectId(null);
+                setSelectedStrokeId(null);
+                setPlaceableType('pucks');
+              }}
+              className={`
+                w-8 h-8 flex items-center justify-center rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
+                ${isPlaceMode && placeableType === 'pucks'
+                  ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500'
+                  : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
+              `}
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                {/* Three pucks in a triangular pile */}
+                <circle cx="8" cy="16" r="5" fill="#1F2937" stroke="#111827" strokeWidth="1" />
+                <circle cx="16" cy="16" r="5" fill="#1F2937" stroke="#111827" strokeWidth="1" />
+                <circle cx="12" cy="9" r="5" fill="#1F2937" stroke="#111827" strokeWidth="1" />
+              </svg>
+            </button>
           </div>
         </div>
 
         {/* Main Content - Canvas and Controls */}
         <div className="flex flex-col gap-3 flex-1 min-w-0">
           {/* Canvas */}
-          <div className="flex justify-center bg-gray-100 dark:bg-gray-900 rounded-lg p-4 overflow-auto">
+          <div className="flex justify-center items-center bg-gray-100 dark:bg-gray-900 rounded-lg p-4 overflow-auto min-h-[300px]">
             <canvas
               ref={canvasRef}
               width={canvasWidth}
@@ -1898,12 +2207,30 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                   : 'Click an object or line to select it'
               ) : isPlaceMode ? (
                 placeableType === 'player' 
-                  ? (playerNumber === 0 ? 'Click to place coach' : `Click to place ${playerColor} player ${playerNumber}`)
+                  ? (playerColor === 'gray' 
+                      ? 'Click to place coach' 
+                      : (() => {
+                          const markerLabels: Record<PlayerMarkerType, string> = {
+                            plain: 'plain circle',
+                            numbered: 'numbered circle',
+                            F: 'forward (F)',
+                            D: 'defense (D)',
+                            G: 'goalie (G)',
+                            Fx: 'forward numbered (F1, F2...)',
+                            Dx: 'defense numbered (D1, D2...)',
+                            Xx: 'X numbered (X1, X2...)',
+                            Ox: 'O numbered (O1, O2...)',
+                          };
+                          return `Click to place ${playerColor} ${markerLabels[playerMarkerType]}`;
+                        })()
+                    )
                   : placeableType === 'cone'
                     ? 'Click to place cone'
                     : placeableType === 'net'
                       ? 'Click to place net'
-                      : 'Click to place small net'
+                      : placeableType === 'smallNet'
+                        ? 'Click to place small net'
+                        : 'Click to place pucks'
               ) : drawMode === 'freehand' ? (
                 'Click and drag to draw'
               ) : drawMode === 'line' ? (

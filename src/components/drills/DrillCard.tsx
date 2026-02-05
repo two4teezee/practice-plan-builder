@@ -1,20 +1,23 @@
 'use client';
 
-import { Drill } from '@/lib/types';
+import type { Drill } from '@/lib/types';
+import { getTagColor } from '@/lib/types';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Clock, Plus, ExternalLink } from 'lucide-react';
+import { Plus, ExternalLink } from 'lucide-react';
 
 interface DrillCardProps {
   drill: Drill;
   onClick?: (drill: Drill) => void;
   onAdd?: (drill: Drill) => void;
   showAddButton?: boolean;
+  maxTags?: number;
 }
 
-export function DrillCard({ drill, onClick, onAdd, showAddButton = false }: DrillCardProps) {
+export function DrillCard({ drill, onClick, onAdd, showAddButton = false, maxTags = 4 }: DrillCardProps) {
   const categoryColors: Record<string, string> = {
     Admin: 'bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-400',
+    Conditioning: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400',
     Skating: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
     Shooting: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
     Passing: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
@@ -44,7 +47,7 @@ export function DrillCard({ drill, onClick, onAdd, showAddButton = false }: Dril
 
   return (
     <Card 
-      className={`p-4 h-[180px] flex flex-col ${onClick ? 'cursor-pointer' : ''}`} 
+      className={`p-4 h-[140px] flex flex-col ${onClick ? 'cursor-pointer' : ''}`} 
       hover={!!onClick}
       onClick={handleCardClick}
     >
@@ -64,25 +67,29 @@ export function DrillCard({ drill, onClick, onAdd, showAddButton = false }: Dril
           </span>
         </div>
 
-        {/* Meta */}
-        <div className="flex flex-wrap gap-3 text-sm text-gray-600 dark:text-gray-400 mt-3">
-          <div className="flex items-center gap-1.5">
-            <Clock className="w-4 h-4" />
-            <span>{drill.duration}</span>
-          </div>
-        </div>
-
         {/* Spacer to push content to bottom */}
         <div className="flex-1" />
 
-        {/* Bottom row with equipment/links and optional add button */}
+        {/* Bottom row with tags/links and optional add button */}
         <div className="flex items-end justify-between mt-2">
-          <div className="flex flex-col gap-1">
-            {/* Equipment */}
-            {drill.equipment && (
-              <p className="text-xs text-gray-500 dark:text-gray-500 truncate max-w-[200px]">
-                <span className="font-medium">Equipment:</span> {drill.equipment}
-              </p>
+          <div className="flex flex-col gap-1 flex-1 min-w-0">
+            {/* Tags */}
+            {drill.tags && drill.tags.length > 0 && (
+              <div className="flex flex-wrap gap-1 items-center">
+                {drill.tags.slice(0, maxTags).map(tag => (
+                  <span
+                    key={tag}
+                    className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${getTagColor(tag)}`}
+                  >
+                    {tag}
+                  </span>
+                ))}
+                {drill.tags.length > maxTags && (
+                  <span className="text-[10px] text-gray-400 dark:text-gray-500">
+                    +{drill.tags.length - maxTags} more
+                  </span>
+                )}
+              </div>
             )}
 
             {/* Links */}

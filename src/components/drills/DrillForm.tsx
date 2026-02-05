@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/Button';
 import { EquipmentPicker } from '@/components/ui/EquipmentPicker';
+import { TagPicker } from '@/components/ui/TagPicker';
 import { DrillSketchModal } from '@/components/drills/DrillSketchModal';
 import { Modal } from '@/components/ui/Modal';
 import type { Drill, SkillFocus } from '@/lib/types';
@@ -25,7 +26,7 @@ type FormData = {
   skillFocus: SkillFocus;
   objective: string;
   setup: string;
-  execution: string;
+  execution: string; // Kept for data compatibility, not shown in UI
   coachingPoints: string;
   variations: string;
   equipment: string;
@@ -33,6 +34,7 @@ type FormData = {
   videoLink: string;
   pdfLink: string;
   sketchData: string;
+  tags: string[];
 };
 
 const getDefaultFormData = (): FormData => ({
@@ -42,7 +44,7 @@ const getDefaultFormData = (): FormData => ({
   skillFocus: SKILL_FOCUSES[0], // Keep for data compatibility but not shown in UI
   objective: '',
   setup: '',
-  execution: '',
+  execution: '', // Keep for data compatibility but not shown in UI
   coachingPoints: '',
   variations: '',
   equipment: '',
@@ -50,6 +52,7 @@ const getDefaultFormData = (): FormData => ({
   videoLink: '',
   pdfLink: '',
   sketchData: '',
+  tags: [],
 });
 
 // Compact styling to match practice plan details panel
@@ -114,7 +117,7 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
     skillFocus: d.skillFocus,
     objective: d.objective,
     setup: d.setup,
-    execution: d.execution,
+    execution: d.execution, // Keep for data compatibility but not shown in UI
     coachingPoints: d.coachingPoints,
     variations: d.variations,
     equipment: d.equipment,
@@ -122,6 +125,7 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
     videoLink: d.videoLink,
     pdfLink: d.pdfLink,
     sketchData: d.sketchData || '',
+    tags: d.tags || [],
   }), []);
 
   // Load form data - check localStorage first, then fall back to drill data or defaults
@@ -275,7 +279,7 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
         </div>
         <div>
           <label htmlFor="duration" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Duration
+            Notional Duration
           </label>
           <select
             id="duration"
@@ -289,7 +293,7 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
         </div>
         <div>
           <label htmlFor="category" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Category
+            Drill Focus
           </label>
           <select
             id="category"
@@ -331,22 +335,7 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
               value={formData.setup}
               onChange={(e) => setFormData({ ...formData, setup: e.target.value })}
               placeholder="How to set up the drill"
-              rows={2}
-              className={`${inputClasses} resize-none`}
-              style={inputStyle}
-            />
-          </div>
-
-          <div>
-            <label htmlFor="execution" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-              Execution
-            </label>
-            <textarea
-              id="execution"
-              value={formData.execution}
-              onChange={(e) => setFormData({ ...formData, execution: e.target.value })}
-              placeholder="How to run the drill"
-              rows={2}
+              rows={3}
               className={`${inputClasses} resize-none`}
               style={inputStyle}
             />
@@ -480,6 +469,42 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
         compact
         hideSummary
       />
+
+      {/* Tags - spans full width */}
+      <TagPicker
+        label="Tags"
+        value={formData.tags}
+        onChange={(tags) => setFormData({ ...formData, tags })}
+        compact
+      />
+
+      {/* Audit Info - only show for existing drills */}
+      {drill && !isCreatingNew && (
+        <div className="text-xs text-gray-500 dark:text-gray-400 pt-2 space-y-0.5">
+          <p>
+            Created{drill.createdBy?.fullName || drill.createdBy?.email ? ` by ${drill.createdBy.fullName || drill.createdBy.email}` : ''} on{' '}
+            {drill.createdAt ? new Date(drill.createdAt).toLocaleDateString('en-US', { 
+              month: 'short', 
+              day: 'numeric', 
+              year: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit'
+            }) : 'Unknown date'}
+          </p>
+          {drill.updatedAt && drill.updatedAt.getTime() !== drill.createdAt?.getTime() && (
+            <p>
+              Last modified{drill.updatedBy?.fullName || drill.updatedBy?.email ? ` by ${drill.updatedBy.fullName || drill.updatedBy.email}` : ''} on{' '}
+              {new Date(drill.updatedAt).toLocaleDateString('en-US', { 
+                month: 'short', 
+                day: 'numeric', 
+                year: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit'
+              })}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2 pt-3 border-t border-gray-200 dark:border-gray-800 mt-1">
         <Button type="button" variant="outline" onClick={handleCancelClick}>
