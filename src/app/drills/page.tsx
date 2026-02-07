@@ -184,39 +184,51 @@ export default function DrillsPage() {
   });
 
   const handleSave = async (drillData: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>) => {
-    // Check for existing drill with the same name (excluding current drill if editing)
-    const existingDrill = await getDrillByName(drillData.name);
-    
-    if (existingDrill?.id && existingDrill.id !== editingDrill?.id) {
-      // Name collision with a different drill - show modal
-      setDuplicateDrillId(existingDrill.id);
-      setPendingDrillData(drillData);
-      setNewDrillName(drillData.name + ' (copy)');
-      setIsSaveAsNew(false);
-      setIsDuplicateModalOpen(true);
-      return;
-    }
+    try {
+      // Check for existing drill with the same name (excluding current drill if editing)
+      const existingDrill = await getDrillByName(drillData.name);
+      
+      if (existingDrill?.id && existingDrill.id !== editingDrill?.id) {
+        // Name collision with a different drill - show modal
+        setDuplicateDrillId(existingDrill.id);
+        setPendingDrillData(drillData);
+        setNewDrillName(drillData.name + ' (copy)');
+        setIsSaveAsNew(false);
+        setIsDuplicateModalOpen(true);
+        return;
+      }
 
-    // No collision, proceed with save
-    await performSave(drillData);
+      // No collision, proceed with save
+      await performSave(drillData);
+    } catch (error) {
+      console.error('Error during save:', error);
+      // If there's an error checking for duplicates, try to save anyway
+      await performSave(drillData);
+    }
   };
 
   const handleSaveAsNew = async (drillData: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>) => {
-    // Check for existing drill with the same name
-    const existingDrill = await getDrillByName(drillData.name);
-    
-    if (existingDrill?.id) {
-      // Name collision - show modal
-      setDuplicateDrillId(existingDrill.id);
-      setPendingDrillData(drillData);
-      setNewDrillName(drillData.name + ' (copy)');
-      setIsSaveAsNew(true);
-      setIsDuplicateModalOpen(true);
-      return;
-    }
+    try {
+      // Check for existing drill with the same name
+      const existingDrill = await getDrillByName(drillData.name);
+      
+      if (existingDrill?.id) {
+        // Name collision - show modal
+        setDuplicateDrillId(existingDrill.id);
+        setPendingDrillData(drillData);
+        setNewDrillName(drillData.name + ' (copy)');
+        setIsSaveAsNew(true);
+        setIsDuplicateModalOpen(true);
+        return;
+      }
 
-    // No collision, proceed with creating new drill
-    await performSaveAsNew(drillData);
+      // No collision, proceed with creating new drill
+      await performSaveAsNew(drillData);
+    } catch (error) {
+      console.error('Error during save as new:', error);
+      // If there's an error checking for duplicates, try to save anyway
+      await performSaveAsNew(drillData);
+    }
   };
 
   // Actual save logic (no duplicate check)

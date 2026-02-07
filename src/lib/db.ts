@@ -234,14 +234,30 @@ export async function getDrillWithAuditInfo(id: string): Promise<Drill | null> {
 }
 
 export async function getDrillByName(name: string): Promise<Drill | null> {
+  if (!name || !name.trim()) {
+    return null;
+  }
+  
   const { data, error } = await supabase
     .from('drills')
     .select('*')
-    .eq('name', name)
+    .eq('name', name.trim())
     .maybeSingle();
   
   if (error) {
-    console.error('Error fetching drill by name:', error);
+    // Log full error details for debugging
+    console.error('Error fetching drill by name:', {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      name: name
+    });
+    // Don't throw on permission errors - just return null to allow save to proceed
+    // The actual save operation will properly handle permission issues
+    if (error.code === 'PGRST116' || error.code === '42501') {
+      return null;
+    }
     throw error;
   }
   

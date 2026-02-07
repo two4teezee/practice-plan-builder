@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/Button';
 import { EquipmentPicker } from '@/components/ui/EquipmentPicker';
-import { TagPicker } from '@/components/ui/TagPicker';
+import { InlineTagPicker } from '@/components/ui/InlineTagPicker';
 import { DrillSketchModal } from '@/components/drills/DrillSketchModal';
 import { Modal } from '@/components/ui/Modal';
 import type { Drill, SkillFocus } from '@/lib/types';
@@ -307,26 +307,11 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
         </div>
       </div>
 
-      {/* Three-column layout: Fields | Variations | Sketch (all same height) */}
-      <div className="grid grid-cols-3 gap-2">
-        {/* Column 1: Description, Setup, Execution, Coaching Points */}
+      {/* Three-column layout: Setup/Coaching Points | Variations | Sketch */}
+      <div className="grid grid-cols-3 gap-3">
+        {/* Column 1: Setup and Coaching Points */}
         <div className="flex flex-col gap-2">
-          <div>
-            <label htmlFor="description" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-              Description
-            </label>
-            <textarea
-              id="description"
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              placeholder="Brief description of the drill"
-              rows={2}
-              className={`${inputClasses} resize-none`}
-              style={inputStyle}
-            />
-          </div>
-
-          <div>
+          <div className="flex-1">
             <label htmlFor="setup" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
               Setup
             </label>
@@ -335,13 +320,13 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
               value={formData.setup}
               onChange={(e) => setFormData({ ...formData, setup: e.target.value })}
               placeholder="How to set up the drill"
-              rows={3}
+              rows={5}
               className={`${inputClasses} resize-none`}
               style={inputStyle}
             />
           </div>
 
-          <div>
+          <div className="flex-1">
             <label htmlFor="coachingPoints" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
               Coaching Points
             </label>
@@ -350,20 +335,20 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
               value={formData.coachingPoints}
               onChange={(e) => setFormData({ ...formData, coachingPoints: e.target.value })}
               placeholder="Key points for coaches"
-              rows={2}
+              rows={5}
               className={`${inputClasses} resize-none`}
               style={inputStyle}
             />
           </div>
         </div>
 
-        {/* Column 2: Variations (spans full height) */}
+        {/* Column 2: Variations (fixed height with scroll) */}
         <div className="flex flex-col">
           <div className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
             Variations
           </div>
-          <div className="flex-1 flex flex-col rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 overflow-hidden">
-            {/* Variations list */}
+          <div className="flex flex-col rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 overflow-hidden h-[280px]">
+            {/* Variations list with fixed height scroll area */}
             <div className="flex-1 overflow-y-auto">
               {variationsList.length > 0 ? (
                 <ul className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -388,13 +373,13 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
                   ))}
                 </ul>
               ) : (
-                <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-500 text-xs p-4">
+                <div className="h-full flex items-center justify-center text-gray-400 dark:text-gray-500 text-xs p-4">
                   No variations yet
                 </div>
               )}
             </div>
             {/* Add new variation input */}
-            <div className="flex items-center gap-2 px-2 py-1.5 border-t border-gray-200 dark:border-gray-700 mt-auto">
+            <div className="flex items-center gap-2 px-2 py-1.5 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
               <input
                 type="text"
                 value={newVariation}
@@ -422,30 +407,33 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
           </div>
         </div>
 
-        {/* Column 3: Sketch preview (same height as variations) */}
+        {/* Column 3: Sketch preview */}
         <div className="flex flex-col">
           <div className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
             Drill Sketch
           </div>
-          <div className="flex-1 flex flex-col rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 overflow-hidden">
-            {sketchPreviewUrl ? (
-              <div className="flex-1 p-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img 
-                  src={sketchPreviewUrl} 
-                  alt="Drill sketch preview" 
-                  className="w-full h-full object-contain rounded"
-                />
-              </div>
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
-                <div className="text-center p-4">
-                  <Pencil className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                  <p>No sketch yet</p>
+          <div className="flex flex-col rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 overflow-hidden h-[280px]">
+            {/* Sketch preview area */}
+            <div className="flex-1 relative">
+              {sketchPreviewUrl ? (
+                <div className="absolute inset-0 p-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img 
+                    src={sketchPreviewUrl} 
+                    alt="Drill sketch preview" 
+                    className="w-full h-full object-contain rounded"
+                  />
                 </div>
-              </div>
-            )}
-            <div className="p-2 border-t border-gray-200 dark:border-gray-700">
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
+                  <div className="text-center p-4">
+                    <Pencil className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p>No sketch yet</p>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="p-2 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
               <Button
                 type="button"
                 variant={formData.sketchData ? 'secondary' : 'outline'}
@@ -461,6 +449,13 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
         </div>
       </div>
 
+      {/* Tags - spans full width with inline category tabs */}
+      <InlineTagPicker
+        label="Tags"
+        value={formData.tags}
+        onChange={(tags) => setFormData({ ...formData, tags })}
+      />
+
       {/* Equipment - spans full width */}
       <EquipmentPicker
         label="Equipment"
@@ -468,14 +463,6 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
         onChange={(value) => setFormData({ ...formData, equipment: value })}
         compact
         hideSummary
-      />
-
-      {/* Tags - spans full width */}
-      <TagPicker
-        label="Tags"
-        value={formData.tags}
-        onChange={(tags) => setFormData({ ...formData, tags })}
-        compact
       />
 
       {/* Audit Info - only show for existing drills */}

@@ -42,6 +42,18 @@ function getSketchImagePreview(sketchData?: string): string | null {
   }
 }
 
+// Helper to split setup text into bullet points (by sentences)
+function splitSetupIntoBullets(setup: string): string[] {
+  if (!setup) return [];
+  // Split by sentence endings (. ! ?) followed by space or end of string
+  // Also handle cases where sentences might be separated by newlines
+  const sentences = setup
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+  return sentences;
+}
+
 // Component to render a single drill item
 function DrillItemView({ item, index }: { item: DrillItem; index?: number }) {
   const duration = item.customDuration || item.drill.duration;
@@ -180,6 +192,18 @@ function DrillItemModalView({ item, index }: { item: DrillItem; index: number })
                 <strong>Objective:</strong> {item.drill.objective}
               </p>
             )}
+            {item.drill.setup && (() => {
+              const bullets = splitSetupIntoBullets(item.drill.setup);
+              return bullets.length > 1 ? (
+                <ul className="text-sm text-gray-600 dark:text-gray-400 mb-1 list-disc list-inside space-y-0.5">
+                  {bullets.map((bullet, idx) => (
+                    <li key={`setup-${item.id}-${idx}`}>{bullet}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">{item.drill.setup}</p>
+              );
+            })()}
             {item.drill.execution && (
               <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
                 <strong>Execution:</strong> {item.drill.execution}
@@ -278,6 +302,18 @@ function TimelineItemModalView({ item, index, nested = false }: { item: Timeline
                   {item.drill.objective}
                 </p>
               )}
+              {item.drill.setup && (() => {
+                const bullets = splitSetupIntoBullets(item.drill.setup);
+                return bullets.length > 1 ? (
+                  <ul className="text-xs text-gray-600 dark:text-gray-400 list-disc list-inside space-y-0.5">
+                    {bullets.map((bullet, idx) => (
+                      <li key={`setup-nested-${item.id}-${idx}`}>{bullet}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-gray-600 dark:text-gray-400">{item.drill.setup}</p>
+                );
+              })()}
               {hasVariations && (
                 <p className="text-xs text-gray-600 dark:text-gray-400">
                   <strong>Variations:</strong> {item.selectedVariations!.join(', ')}
@@ -644,6 +680,18 @@ export default function HistoryPage() {
                               <strong>Objective:</strong> {item.drill.objective}
                             </p>
                           )}
+                          {item.drill.setup && (() => {
+                            const bullets = splitSetupIntoBullets(item.drill.setup);
+                            return bullets.length > 1 ? (
+                              <ul className="text-sm text-gray-600 dark:text-gray-400 mb-1 list-disc list-inside space-y-0.5">
+                                {bullets.map((bullet, idx) => (
+                                  <li key={`setup-legacy-${item.id}-${idx}`}>{bullet}</li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">{item.drill.setup}</p>
+                            );
+                          })()}
                           {item.drill.execution && (
                             <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
                               <strong>Execution:</strong> {item.drill.execution}

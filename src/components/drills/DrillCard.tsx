@@ -59,7 +59,7 @@ export function DrillCard({ drill, onClick, onAdd, showAddButton = false, maxTag
               {drill.name}
             </h3>
             <p className="text-sm text-gray-500 dark:text-gray-400 line-clamp-2 mt-1">
-              {drill.description || drill.objective || 'No description'}
+              {drill.description || drill.objective || drill.coachingPoints ||'No description'}
             </p>
           </div>
           <span className={`px-2.5 py-1 text-xs font-medium rounded-lg whitespace-nowrap ${categoryColors[drill.category]}`}>

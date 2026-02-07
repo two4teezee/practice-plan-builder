@@ -18,7 +18,7 @@ type LineType = 'solid' | 'dashed' | 'double' | 'squiggly';
 type DrawMode = 'freehand' | 'line' | 'curve' | 'polyline';
 type PlaceableType = 'player' | 'cone' | 'net' | 'smallNet' | 'pucks';
 type PlayerColor = 'blue' | 'red' | 'black' | 'gray';
-type PlayerMarkerType = 'plain' | 'numbered' | 'F' | 'D' | 'G' | 'Fx' | 'Dx' | 'Xx' | 'Ox';
+type PlayerMarkerType = 'plain' | 'numbered' | 'F' | 'D' | 'G' | 'Fx' | 'Dx' | 'Xx' | 'Ox' | 'X' | 'O' | 'C' | 'LW' | 'RW';
 
 interface Point {
   x: number;
@@ -657,7 +657,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
   const drawSquigglyPath = useCallback((ctx: CanvasRenderingContext2D, points: Point[]) => {
     if (points.length < 2) return;
     
-    const waveLength = 20; // Fixed wavelength in pixels
+    const waveLength = 13; // Fixed wavelength in pixels (smaller = higher frequency)
     const waveHeight = 8; // Wave amplitude
     
     // Calculate total path length and segment lengths
@@ -1081,7 +1081,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         const borderColorMap: Record<PlayerColor, string> = {
           blue: '#1D4ED8',
           red: '#991B1B',
-          black: '#111827',
+          black: '#6B7280', // Lighter gray border for visibility in dark mode
           gray: '#4B5563',
         };
         const color = colorMap[obj.playerColor || 'blue'];
@@ -1102,8 +1102,8 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         let label = '';
         const markerType = obj.playerMarkerType;
         
-        if (obj.playerColor === 'gray' || obj.playerNumber === 0) {
-          // Coach - always 'C'
+        // Legacy support: gray color with no markerType defaults to 'C'
+        if ((obj.playerColor === 'gray' || obj.playerNumber === 0) && !markerType) {
           label = 'C';
         } else if (markerType === 'plain') {
           // Plain - no label
@@ -1125,6 +1125,16 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           label = `X${obj.playerSequence || 1}`;
         } else if (markerType === 'Ox') {
           label = `O${obj.playerSequence || 1}`;
+        } else if (markerType === 'X') {
+          label = 'X';
+        } else if (markerType === 'O') {
+          label = 'O';
+        } else if (markerType === 'C') {
+          label = 'C';
+        } else if (markerType === 'LW') {
+          label = 'LW';
+        } else if (markerType === 'RW') {
+          label = 'RW';
         } else if (obj.playerNumber !== undefined) {
           // Legacy support for old data
           if (obj.playerNumber === 0) label = 'C';
@@ -1467,39 +1477,28 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     const point = getCanvasCoords(e);
     if (!point) return;
     
-    // Handle select mode - click to select objects or strokes
-    if (isSelectMode && !isDraggingObject && !isDraggingStroke) {
-      // First check objects (they're drawn on top)
-      const hitObjectId = hitTestObject(point, placedObjects);
-      if (hitObjectId) {
-        setSelectedObjectId(hitObjectId);
-        setSelectedStrokeId(null);
-        return;
-      }
-      
-      // Then check strokes
-      const hitStrokeId = hitTestStroke(point, strokes);
-      if (hitStrokeId) {
-        setSelectedStrokeId(hitStrokeId);
-        setSelectedObjectId(null);
-        return;
-      }
-      
-      // Clicked on empty space - deselect
-      setSelectedObjectId(null);
-      setSelectedStrokeId(null);
+    // Handle select mode - don't do anything else when in select mode
+    // (handleMouseDown already handles selection and dragging)
+    if (isSelectMode) {
       return;
     }
     
     // Handle place mode - add object to canvas
     if (isPlaceMode) {
       if (placeableType === 'player') {
+        // Determine the actual color to use:
+        // - If playerColor is 'gray', keep it (Coach button was clicked)
+        // - Otherwise, use the current lineColor (mapped: gray -> black for circles)
+        const effectiveColor: PlayerColor = playerColor === 'gray' 
+          ? 'gray' 
+          : (lineColor === 'gray' ? 'black' : lineColor);
+        
         // Determine if this marker type needs auto-numbering
         const autoNumberedTypes: PlayerMarkerType[] = ['numbered', 'Fx', 'Dx', 'Xx', 'Ox'];
         const needsSequence = autoNumberedTypes.includes(playerMarkerType);
         
         // Get the counter key and next sequence number
-        const counterKey = `${playerColor}-${playerMarkerType}`;
+        const counterKey = `${effectiveColor}-${playerMarkerType}`;
         const nextSequence = needsSequence ? (markerCounters[counterKey] || 0) + 1 : undefined;
         
         const newObject: PlacedObject = {
@@ -1507,11 +1506,11 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           type: placeableType,
           x: point.x,
           y: point.y,
-          playerColor,
+          playerColor: effectiveColor,
           playerMarkerType,
           playerSequence: nextSequence,
           // Keep playerNumber for legacy/coach support
-          playerNumber: playerColor === 'gray' ? 0 : undefined,
+          playerNumber: effectiveColor === 'gray' ? 0 : undefined,
         };
         setPlacedObjects(prev => [...prev, newObject]);
         
@@ -1688,14 +1687,14 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       return;
     }
     
-    if (drawMode !== 'freehand') return;
-    
     // Handle end of stroke drag in select mode
     if (isSelectMode && isDraggingStroke) {
       setIsDraggingStroke(false);
       setDragStartPoint(null);
       return;
     }
+    
+    if (drawMode !== 'freehand') return;
     
     if (isDrawing && currentStroke.length > 1) {
       const newStroke: Stroke = {
@@ -1984,66 +1983,59 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           {/* Divider */}
           <div className="h-px w-full bg-gray-300 dark:bg-gray-600" />
 
-          {/* Player Markers - Red, Blue, Black columns */}
-          <div className="grid grid-cols-3 gap-0.5">
-            {/* Column headers */}
-            {(['red', 'blue', 'black'] as const).map(color => (
-              <div key={`header-${color}`} className="flex justify-center">
-                <div 
-                  className="w-3 h-3 rounded-full" 
-                  style={{ backgroundColor: color === 'red' ? '#DC2626' : color === 'blue' ? '#2563EB' : '#1F2937' }}
-                />
-              </div>
-            ))}
-            
-            {/* Marker types for each color */}
+          {/* Player Markers - uses selected line color */}
+          <div className="grid grid-cols-2 gap-1">
             {([
               { type: 'plain' as PlayerMarkerType, label: '', title: 'Plain (no label)' },
-              { type: 'numbered' as PlayerMarkerType, label: 'x', title: 'Auto-numbered (1, 2, 3...)' },
+              { type: 'numbered' as PlayerMarkerType, label: '#', title: 'Auto-numbered (1, 2, 3...)' },
+              { type: 'X' as PlayerMarkerType, label: 'X', title: 'X' },
+              { type: 'O' as PlayerMarkerType, label: 'O', title: 'O' },
+              { type: 'C' as PlayerMarkerType, label: 'C', title: 'Center' },
               { type: 'F' as PlayerMarkerType, label: 'F', title: 'Forward' },
+              { type: 'LW' as PlayerMarkerType, label: 'LW', title: 'Left Wing' },
+              { type: 'RW' as PlayerMarkerType, label: 'RW', title: 'Right Wing' },
               { type: 'D' as PlayerMarkerType, label: 'D', title: 'Defense' },
               { type: 'G' as PlayerMarkerType, label: 'G', title: 'Goalie' },
-              { type: 'Fx' as PlayerMarkerType, label: 'Fx', title: 'Forward numbered (F1, F2...)' },
-              { type: 'Dx' as PlayerMarkerType, label: 'Dx', title: 'Defense numbered (D1, D2...)' },
-              { type: 'Xx' as PlayerMarkerType, label: 'Xx', title: 'X numbered (X1, X2...)' },
-              { type: 'Ox' as PlayerMarkerType, label: 'Ox', title: 'O numbered (O1, O2...)' },
-            ] as const).flatMap(({ type, label, title }) => (
-              (['red', 'blue', 'black'] as const).map(color => (
-                <button
-                  key={`${color}-${type}`}
-                  type="button"
-                  title={`${color.charAt(0).toUpperCase() + color.slice(1)} ${title}`}
-                  onClick={() => {
-                    setIsPlaceMode(true);
-                    setIsSelectMode(false);
-                    setSelectedObjectId(null);
-                    setSelectedStrokeId(null);
-                    setPlaceableType('player');
-                    setPlayerColor(color);
-                    setPlayerMarkerType(type);
-                  }}
-                  className={`
-                    w-5 h-5 rounded-full flex items-center justify-center text-white font-bold transition-all
-                    ${isPlaceMode && placeableType === 'player' && playerColor === color && playerMarkerType === type
-                      ? 'ring-2 ring-offset-1 ring-primary-500 dark:ring-offset-gray-800'
-                      : ''}
-                  `}
-                  style={{ 
-                    backgroundColor: color === 'red' ? '#DC2626' : color === 'blue' ? '#2563EB' : '#1F2937',
-                    fontSize: label.length > 1 ? '6px' : '8px',
-                  }}
-                >
-                  {label}
-                </button>
-              ))
+              { type: 'Fx' as PlayerMarkerType, label: 'F#', title: 'Forward numbered (F1, F2...)' },
+              { type: 'Dx' as PlayerMarkerType, label: 'D#', title: 'Defense numbered (D1, D2...)' },
+              { type: 'Xx' as PlayerMarkerType, label: 'X#', title: 'X numbered (X1, X2...)' },
+              { type: 'Ox' as PlayerMarkerType, label: 'O#', title: 'O numbered (O1, O2...)' },
+            ]).map(({ type, label, title }) => (
+              <button
+                key={type}
+                type="button"
+                title={title}
+                onClick={() => {
+                  setIsPlaceMode(true);
+                  setIsSelectMode(false);
+                  setSelectedObjectId(null);
+                  setSelectedStrokeId(null);
+                  setPlaceableType('player');
+                  // Use lineColor but map gray to black for players
+                  setPlayerColor(lineColor === 'gray' ? 'black' : lineColor);
+                  setPlayerMarkerType(type);
+                }}
+                className={`
+                  w-6 h-6 rounded-full flex items-center justify-center text-white font-bold transition-all
+                  ${isPlaceMode && placeableType === 'player' && playerMarkerType === type
+                    ? 'ring-2 ring-offset-1 ring-primary-500 dark:ring-offset-gray-800'
+                    : ''}
+                `}
+                style={{ 
+                  backgroundColor: COLOR_MAP[lineColor === 'gray' ? 'black' : lineColor],
+                  fontSize: label.length > 1 ? '8px' : '10px',
+                }}
+              >
+                {label}
+              </button>
             ))}
           </div>
 
-          {/* Coach - centered */}
+          {/* Coach (Gray) - special marker */}
           <div className="flex justify-center">
             <button
               type="button"
-              title="Coach"
+              title="Coach (Gray)"
               onClick={() => {
                 setIsPlaceMode(true);
                 setIsSelectMode(false);
@@ -2051,7 +2043,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                 setSelectedStrokeId(null);
                 setPlaceableType('player');
                 setPlayerColor('gray');
-                setPlayerMarkerType('plain'); // Coach uses gray with 'C' label (handled specially)
+                setPlayerMarkerType('C');
               }}
               className={`
                 w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold transition-all
@@ -2213,7 +2205,12 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                           const markerLabels: Record<PlayerMarkerType, string> = {
                             plain: 'plain circle',
                             numbered: 'numbered circle',
+                            X: 'X',
+                            O: 'O',
+                            C: 'center (C)',
                             F: 'forward (F)',
+                            LW: 'left wing (LW)',
+                            RW: 'right wing (RW)',
                             D: 'defense (D)',
                             G: 'goalie (G)',
                             Fx: 'forward numbered (F1, F2...)',

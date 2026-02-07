@@ -55,6 +55,18 @@ function base64ToUint8Array(base64: string): Uint8Array {
   return bytes;
 }
 
+// Helper to split setup text into bullet points (by sentences)
+function splitSetupIntoBullets(setup: string): string[] {
+  if (!setup) return [];
+  // Split by sentence endings (. ! ?) followed by space or end of string
+  // Also handle cases where sentences might be separated by newlines
+  const sentences = setup
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+  return sentences;
+}
+
 // Helper to render timeline items recursively for PDF (compact version)
 function renderTimelineItemsToPDF(
   doc: jsPDF, 
@@ -102,6 +114,23 @@ function renderTimelineItemsToPDF(
         y += objLines.length * lineHeight;
       }
 
+      if (item.drill.setup) {
+        const setupBullets = splitSetupIntoBullets(item.drill.setup);
+        if (setupBullets.length > 1) {
+          // Render as bulleted list
+          for (const bullet of setupBullets) {
+            const bulletLines = doc.splitTextToSize(`• ${bullet}`, textWidth - 4);
+            doc.text(bulletLines, 16 + indent, y);
+            y += bulletLines.length * lineHeight;
+          }
+        } else {
+          // Single sentence - render inline
+          const setupLines = doc.splitTextToSize(item.drill.setup, textWidth);
+          doc.text(setupLines, 14 + indent, y);
+          y += setupLines.length * lineHeight;
+        }
+      }
+
       if (item.drill.execution) {
         const execLines = doc.splitTextToSize(`Execution: ${item.drill.execution}`, textWidth);
         doc.text(execLines, 14 + indent, y);
@@ -109,9 +138,19 @@ function renderTimelineItemsToPDF(
       }
 
       if (item.drill.coachingPoints) {
-        const cpLines = doc.splitTextToSize(`Coaching Points: ${item.drill.coachingPoints}`, textWidth);
-        doc.text(cpLines, 14 + indent, y);
-        y += cpLines.length * lineHeight;
+        doc.setFont('helvetica', 'bold');
+        doc.text('Coaching Points: ', 14 + indent, y);
+        const labelWidth = doc.getTextWidth('Coaching Points: ');
+        doc.setFont('helvetica', 'normal');
+        const cpLines = doc.splitTextToSize(item.drill.coachingPoints, textWidth - labelWidth);
+        doc.text(cpLines[0], 14 + indent + labelWidth, y);
+        if (cpLines.length > 1) {
+          for (let i = 1; i < cpLines.length; i++) {
+            y += lineHeight;
+            doc.text(cpLines[i], 14 + indent, y);
+          }
+        }
+        y += lineHeight;
       }
 
       if (item.selectedVariations && item.selectedVariations.length > 0) {
@@ -269,6 +308,21 @@ export async function exportPracticePlanToPDF(plan: PracticePlan) {
         y += objLines.length * 3.5;
       }
       
+      if (item.drill.setup) {
+        const setupBullets = splitSetupIntoBullets(item.drill.setup);
+        if (setupBullets.length > 1) {
+          for (const bullet of setupBullets) {
+            const bulletLines = doc.splitTextToSize(`• ${bullet}`, pageWidth - 27);
+            doc.text(bulletLines, 16, y);
+            y += bulletLines.length * 3.5;
+          }
+        } else {
+          const setupLines = doc.splitTextToSize(item.drill.setup, pageWidth - 25);
+          doc.text(setupLines, 14, y);
+          y += setupLines.length * 3.5;
+        }
+      }
+      
       if (item.drill.execution) {
         const execLines = doc.splitTextToSize(`Execution: ${item.drill.execution}`, pageWidth - 25);
         doc.text(execLines, 14, y);
@@ -276,9 +330,19 @@ export async function exportPracticePlanToPDF(plan: PracticePlan) {
       }
       
       if (item.drill.coachingPoints) {
-        const cpLines = doc.splitTextToSize(`Coaching Points: ${item.drill.coachingPoints}`, pageWidth - 25);
-        doc.text(cpLines, 14, y);
-        y += cpLines.length * 3.5;
+        doc.setFont('helvetica', 'bold');
+        doc.text('Coaching Points: ', 14, y);
+        const labelWidth = doc.getTextWidth('Coaching Points: ');
+        doc.setFont('helvetica', 'normal');
+        const cpLines = doc.splitTextToSize(item.drill.coachingPoints, pageWidth - 25 - labelWidth);
+        doc.text(cpLines[0], 14 + labelWidth, y);
+        if (cpLines.length > 1) {
+          for (let i = 1; i < cpLines.length; i++) {
+            y += 3.5;
+            doc.text(cpLines[i], 14, y);
+          }
+        }
+        y += 3.5;
       }
       
       y += 3;
@@ -335,6 +399,20 @@ function generateTimelineItemParagraphs(
         contentRuns.push(new TextRun({ text: ' | ', size: fontSize, color: '999999' }));
         contentRuns.push(new TextRun({ text: 'Obj: ', bold: true, size: fontSize }));
         contentRuns.push(new TextRun({ text: item.drill.objective, size: fontSize }));
+      }
+      if (item.drill.setup) {
+        const setupBullets = splitSetupIntoBullets(item.drill.setup);
+        contentRuns.push(new TextRun({ text: ' | ', size: fontSize, color: '999999' }));
+        if (setupBullets.length > 1) {
+          // Multiple sentences - show as bullet points
+          setupBullets.forEach((bullet, idx) => {
+            if (idx > 0) contentRuns.push(new TextRun({ text: ' ', size: fontSize }));
+            contentRuns.push(new TextRun({ text: `• ${bullet}`, size: fontSize }));
+          });
+        } else {
+          // Single sentence - show inline without label
+          contentRuns.push(new TextRun({ text: item.drill.setup, size: fontSize }));
+        }
       }
       if (item.drill.execution) {
         contentRuns.push(new TextRun({ text: ' | ', size: fontSize, color: '999999' }));
@@ -498,6 +576,13 @@ export async function exportPracticePlanToWord(plan: PracticePlan) {
             width: { size: 60, type: WidthType.PERCENTAGE },
             children: [
               item.drill.objective ? new Paragraph({ children: [new TextRun({ text: 'Objective: ', bold: true }), new TextRun(item.drill.objective)] }) : new Paragraph(''),
+              ...(item.drill.setup ? (() => {
+                const bullets = splitSetupIntoBullets(item.drill.setup);
+                if (bullets.length > 1) {
+                  return bullets.map(bullet => new Paragraph({ children: [new TextRun({ text: `• ${bullet}` })] }));
+                }
+                return [new Paragraph({ children: [new TextRun(item.drill.setup)] })];
+              })() : [new Paragraph('')]),
               item.drill.execution ? new Paragraph({ children: [new TextRun({ text: 'Execution: ', bold: true }), new TextRun(item.drill.execution)] }) : new Paragraph(''),
               item.drill.coachingPoints ? new Paragraph({ children: [new TextRun({ text: 'Coaching Points: ', bold: true }), new TextRun(item.drill.coachingPoints)] }) : new Paragraph(''),
             ],
@@ -610,6 +695,14 @@ function generateTimelineItemsHtml(
       // Compact: combine fields with separators
       const details: string[] = [];
       if (item.drill.objective) details.push(`<strong>Obj:</strong> ${item.drill.objective}`);
+      if (item.drill.setup) {
+        const setupBullets = splitSetupIntoBullets(item.drill.setup);
+        if (setupBullets.length > 1) {
+          details.push(`<ul style="margin:0;padding-left:16px;">${setupBullets.map(b => `<li>${b}</li>`).join('')}</ul>`);
+        } else {
+          details.push(item.drill.setup);
+        }
+      }
       if (item.drill.execution) details.push(`<strong>Exec:</strong> ${item.drill.execution}`);
       if (item.drill.coachingPoints) details.push(`<strong>Tips:</strong> ${item.drill.coachingPoints}`);
       if (hasVariations) details.push(`<strong>Vars:</strong> ${item.selectedVariations!.join(', ')}`);
@@ -691,14 +784,26 @@ export async function printPracticePlan(plan: PracticePlan) {
     timelineHtml = generateTimelineItemsHtml(normalizedPlan.timeline);
   } else {
     // Fallback to legacy drills
-    timelineHtml = normalizedPlan.drills.map((item, index) => `
+    timelineHtml = normalizedPlan.drills.map((item, index) => {
+      let setupHtml = '';
+      if (item.drill.setup) {
+        const bullets = splitSetupIntoBullets(item.drill.setup);
+        if (bullets.length > 1) {
+          setupHtml = `<ul style="margin:4px 0;padding-left:16px;">${bullets.map(b => `<li>${b}</li>`).join('')}</ul>`;
+        } else {
+          setupHtml = `<p>${item.drill.setup}</p>`;
+        }
+      }
+      return `
       <div class="drill">
         <h3>${index + 1}. ${item.drill.name} <span class="time">(${item.drill.duration})</span></h3>
         ${item.drill.objective ? `<p><strong>Objective:</strong> ${item.drill.objective}</p>` : ''}
+        ${setupHtml}
         ${item.drill.execution ? `<p><strong>Execution:</strong> ${item.drill.execution}</p>` : ''}
         ${item.drill.coachingPoints ? `<p><strong>Coaching Points:</strong> ${item.drill.coachingPoints}</p>` : ''}
       </div>
-    `).join('');
+    `;
+    }).join('');
   }
 
   const html = `

@@ -329,26 +329,26 @@ export const DRILL_DURATIONS: string[] = Array.from({ length: 60 }, (_, i) => {
 
 // Drill tags organized by category
 export const DRILL_TAG_CATEGORIES = {
-  'Practice Structure': ['Warmup', 'Cooldown', 'Admin'],
   'Skating': ['Skating', 'Edges', 'Speed', 'Agility', 'Acceleration', 'Balance', 'Crossover', 'Stops', 'Starts', 'Lateral'],
   'Puck Skills': ['Puckhandling', 'Passing', 'Receiving', 'Shooting', 'Scoring', 'Finishing'],
   'Shooting Details': ['Rebounds', 'Deflections', 'Screens', 'Tips'],
-  'Game Situations': ['Battles', 'Small Area', 'Small Game', 'Contact', 'Compete', 'Possession'],
+  'Game Situations': ['Battles', 'Small Area', 'Contact', 'Compete', 'Possession'],
   'Team Systems': ['Breakouts', 'Regroups', 'Transitions', 'Entries', 'Forecheck', 'Backcheck', 'Coverage'],
-  'Offensive Play': ['Offensive Play', 'Offense', 'Cycling', 'Netfront', 'Spacing', 'Rush', 'Cycle', 'Cornerplay', 'Wallplay', 'Support', 'Quickstrike'],
-  'Defensive Play': ['Defensive Play', 'Defense', 'Angling', 'Containment', 'Gap Control', 'Transition Defense', 'Pressure', 'Counterattack'],
+  'Offensive Play': ['Offensive Play', 'Cycling', 'Netfront', 'Spacing', 'Rush', 'Cycle', 'Corner Play', 'Wall Play', 'Support', 'Quickstrike'],
+  'Defensive Play': ['Defensive Play', 'Angling', 'Containment', 'Gap Control', 'Transition Defense', 'Pressure', 'Counter Attack'],
   'Special Teams': ['Special Teams', 'Powerplay', 'Penalty Kill'],
   'Conditioning': ['Conditioning', 'Endurance', 'Sprint'],
-  'Goalie': ['Rebound Control', 'Goalie Puckhandling', 'Post Play', 'Puck Tracking','Recovery'],
+  'Goalie': ['Rebound Control', 'Goalie Puckhandling', 'Post Play', 'Puck Tracking', 'Recovery'],
   'Tactical': ['Deception', 'Vision', 'Timing', 'Awareness', 'Communication', 'Decision Making'],
-  'Ice Layout': ['Full Ice', 'Half Ice', 'Station Based', 'Neutralzone', 'Offensive Zone', 'Defensive Zone', 'Dzone'],
+  'Ice Layout': ['Full Ice', 'Half Ice', 'Station Based', 'Neutral Zone', 'Offensive Zone', 'Defensive Zone'],
   'Player Numbers': ['1v0', '1v1', '2v1', '2v2', '3v2', '3v3', '4v4', '5v5'],
-  'Positions': ['Forwards', 'Defensemen', 'Centers', 'Wingers'],
+  'Positions': ['Forwards', 'Defensemen', 'Centers', 'Wingers', 'Goalie'],
   'Equipment': ['Pucks', 'Cones', 'Tires', 'Pads', 'Gates', 'Obstacle'],
   'Skill Level': ['Beginner', 'Intermediate', 'Advanced', 'Expert'],
   'Age Group': ['U8', 'U10', 'U12', 'U14', 'U16', 'U18', 'Adult'],
   'Tempo': ['Low Tempo', 'Medium Tempo', 'High Tempo'],
   'Constraints': ['No Sticks', 'One Touch', 'Time Limit', 'Shot Limit', 'Pass Limit'],
+  'Practice Structure': ['Warmup', 'Cooldown', 'Admin'],
 } as const;
 
 // Flat list of all tags (derived from categories for backwards compatibility)
