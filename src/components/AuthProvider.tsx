@@ -44,9 +44,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const profileFetchInProgress = useRef(false);
+  const hasInitialProfile = useRef(false);
 
   // Fetch profile for current user with timeout
-  const fetchProfile = useCallback(async (userId: string) => {
+  // If preserveOnFailure is true, keep existing profile if fetch fails
+  const fetchProfile = useCallback(async (userId: string, preserveOnFailure: boolean = false) => {
     // Prevent duplicate fetches
     if (profileFetchInProgress.current) {
       return;
@@ -63,10 +65,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const profilePromise = getProfile(userId);
       
       const userProfile = await Promise.race([profilePromise, timeoutPromise]);
-      setProfile(userProfile);
+      
+      if (userProfile) {
+        setProfile(userProfile);
+        hasInitialProfile.current = true;
+      } else if (!preserveOnFailure) {
+        // Only clear profile if we're not preserving on failure
+        setProfile(null);
+      }
+      // If preserveOnFailure is true and fetch returned null, keep existing profile
     } catch (error) {
       console.error('Error fetching profile:', error);
-      setProfile(null);
+      // Only clear profile if we don't want to preserve and don't have one yet
+      if (!preserveOnFailure && !hasInitialProfile.current) {
+        setProfile(null);
+      }
     } finally {
       profileFetchInProgress.current = false;
     }
@@ -76,7 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshProfile = useCallback(async () => {
     if (user) {
       profileFetchInProgress.current = false; // Allow refresh
-      await fetchProfile(user.id);
+      await fetchProfile(user.id, false); // Don't preserve on manual refresh
     }
   }, [user, fetchProfile]);
 
@@ -84,6 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // This avoids race conditions between getSession and the listener
   useEffect(() => {
     let mounted = true;
+    let isInitialEvent = true;
 
     // Subscribe to auth changes - this handles initial session too
     const { unsubscribe } = onAuthStateChange(async (event, newSession) => {
@@ -95,11 +109,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(newSession?.user ?? null);
 
       if (newSession?.user) {
-        await fetchProfile(newSession.user.id);
+        // On initial load, don't preserve on failure (need to get real state)
+        // On token refresh, preserve existing profile if fetch fails
+        const shouldPreserve = !isInitialEvent && hasInitialProfile.current;
+        await fetchProfile(newSession.user.id, shouldPreserve);
       } else {
+        // User signed out
         setProfile(null);
+        hasInitialProfile.current = false;
       }
 
+      isInitialEvent = false;
+      
       // Always set loading to false after processing any auth event
       setIsLoading(false);
     });
@@ -129,7 +150,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (signedInUser) {
       profileFetchInProgress.current = false; // Allow fresh fetch
-      await fetchProfile(signedInUser.id);
+      hasInitialProfile.current = false; // Reset for fresh login
+      await fetchProfile(signedInUser.id, false);
     }
 
     return { error: null };

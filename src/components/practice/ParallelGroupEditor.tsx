@@ -21,6 +21,7 @@ import type {
   TimelineItem, 
   DrillItem,
   PracticeGroup,
+  Drill,
 } from '@/lib/types';
 import { getGroupDuration, secondsToDurationString } from '@/lib/types';
 import { SortableTimelineItem } from './SortableTimelineItem';
@@ -50,6 +51,7 @@ interface ParallelGroupEditorProps {
   onRemoveGroup: (parallelId: string, groupId: string) => void;
   onRemoveParallelSplit: (id: string) => void;
   onUpdateGroupName: (parallelId: string, groupId: string, name: string) => void;
+  onUpdateOverrides?: (id: string, overrides: Partial<Drill> | undefined) => void;
   depth?: number;
   parentPath?: string[];
 }
@@ -77,6 +79,7 @@ function GroupColumn({
   onRemoveGroup,
   onRemoveParallelSplit,
   onUpdateGroupName,
+  onUpdateOverrides,
   depth,
 }: {
   group: PracticeGroup;
@@ -100,6 +103,7 @@ function GroupColumn({
   onRemoveGroup: (parallelId: string, groupId: string) => void;
   onRemoveParallelSplit: (id: string) => void;
   onUpdateGroupName: (parallelId: string, groupId: string, name: string) => void;
+  onUpdateOverrides?: (id: string, overrides: Partial<Drill> | undefined) => void;
   depth: number;
 }) {
   const sensors = useSensors(
@@ -249,6 +253,7 @@ function GroupColumn({
                     onRemoveGroup={onRemoveGroup}
                     onRemoveParallelSplit={onRemoveParallelSplit}
                     onUpdateGroupName={onUpdateGroupName}
+                    onUpdateOverrides={onUpdateOverrides}
                     depth={depth + 1}
                     parentPath={groupPath}
                     compact
@@ -298,6 +303,7 @@ export function ParallelGroupEditor({
   onRemoveGroup,
   onRemoveParallelSplit,
   onUpdateGroupName,
+  onUpdateOverrides,
   depth = 0,
   parentPath = [],
 }: ParallelGroupEditorProps) {
@@ -414,6 +420,7 @@ export function ParallelGroupEditor({
                 onRemoveGroup={onRemoveGroup}
                 onRemoveParallelSplit={onRemoveParallelSplit}
                 onUpdateGroupName={onUpdateGroupName}
+                onUpdateOverrides={onUpdateOverrides}
                 depth={depth}
               />
             ))}

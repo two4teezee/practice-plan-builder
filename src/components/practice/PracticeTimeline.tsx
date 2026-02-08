@@ -57,13 +57,15 @@ function DrillBlock({
   const drill = block.drillItem;
   const duration = drill.customDuration || drill.drill.duration;
   
+  const drillCategoryColors = categoryColors[drill.drill.category] || categoryColors.Other;
+  
   return (
     <div
       className={`
         absolute top-1 bottom-1 rounded border
         flex items-center justify-center overflow-hidden
         transition-all duration-200 hover:z-10 hover:shadow-lg cursor-default
-        ${categoryColors[drill.drill.category]}
+        ${drillCategoryColors}
         ${block.startPercent + block.widthPercent > 100 ? 'opacity-75' : ''}
       `}
       style={{
@@ -188,6 +190,7 @@ function ParallelBlockVisualization({
             {/* Render items in this track */}
             {blocks.map(itemBlock => {
               if (itemBlock.type === 'drill' && itemBlock.drillItem) {
+                const itemCategoryColors = categoryColors[itemBlock.drillItem.drill.category] || categoryColors.Other;
                 return (
                   <div
                     key={itemBlock.id}
@@ -195,7 +198,7 @@ function ParallelBlockVisualization({
                       absolute rounded border
                       flex items-center justify-center overflow-hidden
                       transition-all duration-200 hover:z-10 cursor-default
-                      ${categoryColors[itemBlock.drillItem.drill.category]}
+                      ${itemCategoryColors}
                     `}
                     style={{
                       left: `${itemBlock.startPercent}%`,
@@ -439,12 +442,15 @@ export function PracticeTimeline({ timeline, practiceDuration }: PracticeTimelin
       {/* Legend */}
       {categories.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
-          {categories.map((category) => (
-            <div key={category} className="flex items-center gap-1">
-              <div className={`w-2.5 h-2.5 rounded-sm ${categoryColors[category].split(' ').slice(0, 2).join(' ')}`} />
-              <span className="text-[10px] text-gray-500 dark:text-gray-400">{category}</span>
-            </div>
-          ))}
+          {categories.map((category) => {
+            const colors = categoryColors[category] || categoryColors.Other;
+            return (
+              <div key={category} className="flex items-center gap-1">
+                <div className={`w-2.5 h-2.5 rounded-sm ${colors.split(' ').slice(0, 2).join(' ')}`} />
+                <span className="text-[10px] text-gray-500 dark:text-gray-400">{category}</span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

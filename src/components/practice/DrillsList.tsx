@@ -15,7 +15,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { TimelineItem, DrillItem } from '@/lib/types';
+import type { TimelineItem, DrillItem, Drill } from '@/lib/types';
 import { SortableTimelineItem } from './SortableTimelineItem';
 import { ListOrdered } from 'lucide-react';
 
@@ -34,6 +34,7 @@ interface DrillsListProps {
   onRemoveGroup: (parallelId: string, groupId: string) => void;
   onRemoveParallelSplit: (id: string) => void;
   onUpdateGroupName: (parallelId: string, groupId: string, name: string) => void;
+  onUpdateOverrides?: (id: string, overrides: Partial<Drill> | undefined) => void;
 }
 
 export function DrillsList({ 
@@ -45,12 +46,14 @@ export function DrillsList({
   onUpdateVariations,
   onViewDetails,
   onAddDrillToGroup,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onAddParallelSplit,
   onAddNestedSplit,
   onAddGroup,
   onRemoveGroup,
   onRemoveParallelSplit,
   onUpdateGroupName,
+  onUpdateOverrides,
 }: DrillsListProps) {
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -114,6 +117,7 @@ export function DrillsList({
               onRemoveGroup={onRemoveGroup}
               onRemoveParallelSplit={onRemoveParallelSplit}
               onUpdateGroupName={onUpdateGroupName}
+              onUpdateOverrides={onUpdateOverrides}
             />
           ))}
         </div>

@@ -18,15 +18,29 @@ function getSketchInfo(sketchData?: string): SketchInfo | null {
     const data = JSON.parse(sketchData);
     if (!data.imagePreview) return null;
     
-    // Calculate aspect ratio based on rink view
-    // Full rink: 200 x 85 ft = 2.35:1 ratio
-    // Half rink: 85 x 80 ft = ~1.06:1 ratio (width x depth)
+    // Calculate aspect ratio based on rink view (width / height)
+    // These match the canvas dimensions in DrillSketchModal.tsx
+    // Full rink: 1000 x 425 = 2.35:1 ratio (200ft x 85ft)
+    // Half rink: 550 x 518 = 1.06:1 ratio (85ft wide x 80ft deep)
+    // Neutral zone: 550 x 324 = 1.70:1 ratio (85ft wide x 50ft deep)
+    // Quarter ice: 400 x 471 = 0.85:1 ratio (42.5ft wide x 50ft deep)
     let aspectRatio: number;
-    if (data.rinkView === 'full') {
-      aspectRatio = 200 / 85; // ~2.35
-    } else {
-      // Half rink - canvas is oriented with width being rink width
-      aspectRatio = 85 / 80; // ~1.06
+    switch (data.rinkView) {
+      case 'full':
+        aspectRatio = 200 / 85; // ~2.35
+        break;
+      case 'half':
+        aspectRatio = 85 / 80; // ~1.06
+        break;
+      case 'neutral':
+        aspectRatio = 85 / 50; // ~1.70
+        break;
+      case 'quarter':
+        aspectRatio = 42.5 / 50; // ~0.85
+        break;
+      default:
+        // Default to half rink for backwards compatibility
+        aspectRatio = 85 / 80; // ~1.06
     }
     
     return {
@@ -53,6 +67,18 @@ function base64ToUint8Array(base64: string): Uint8Array {
     bytes[i] = binaryString.charCodeAt(i);
   }
   return bytes;
+}
+
+// Helper to split setup text into bullet points (by sentences)
+function splitSetupIntoBullets(setup: string): string[] {
+  if (!setup) return [];
+  // Split by sentence endings (. ! ?) followed by space or end of string
+  // Also handle cases where sentences might be separated by newlines
+  const sentences = setup
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+  return sentences;
 }
 
 // Helper to render timeline items recursively for PDF (compact version)
@@ -102,6 +128,23 @@ function renderTimelineItemsToPDF(
         y += objLines.length * lineHeight;
       }
 
+      if (item.drill.setup) {
+        const setupBullets = splitSetupIntoBullets(item.drill.setup);
+        if (setupBullets.length > 1) {
+          // Render as bulleted list
+          for (const bullet of setupBullets) {
+            const bulletLines = doc.splitTextToSize(`• ${bullet}`, textWidth - 4);
+            doc.text(bulletLines, 16 + indent, y);
+            y += bulletLines.length * lineHeight;
+          }
+        } else {
+          // Single sentence - render inline
+          const setupLines = doc.splitTextToSize(item.drill.setup, textWidth);
+          doc.text(setupLines, 14 + indent, y);
+          y += setupLines.length * lineHeight;
+        }
+      }
+
       if (item.drill.execution) {
         const execLines = doc.splitTextToSize(`Execution: ${item.drill.execution}`, textWidth);
         doc.text(execLines, 14 + indent, y);
@@ -109,9 +152,19 @@ function renderTimelineItemsToPDF(
       }
 
       if (item.drill.coachingPoints) {
-        const cpLines = doc.splitTextToSize(`Coaching Points: ${item.drill.coachingPoints}`, textWidth);
-        doc.text(cpLines, 14 + indent, y);
-        y += cpLines.length * lineHeight;
+        doc.setFont('helvetica', 'bold');
+        doc.text('Coaching Points: ', 14 + indent, y);
+        const labelWidth = doc.getTextWidth('Coaching Points: ');
+        doc.setFont('helvetica', 'normal');
+        const cpLines = doc.splitTextToSize(item.drill.coachingPoints, textWidth - labelWidth);
+        doc.text(cpLines[0], 14 + indent + labelWidth, y);
+        if (cpLines.length > 1) {
+          for (let i = 1; i < cpLines.length; i++) {
+            y += lineHeight;
+            doc.text(cpLines[i], 14 + indent, y);
+          }
+        }
+        y += lineHeight;
       }
 
       if (item.selectedVariations && item.selectedVariations.length > 0) {
@@ -120,33 +173,19 @@ function renderTimelineItemsToPDF(
         y += varLines.length * lineHeight;
       }
 
-      // Sketch image - dynamically sized to fit text height
+      // Sketch image - fixed height with width calculated from aspect ratio
       if (sketchInfo) {
         const textHeight = y - drillStartY;
-        const maxSketchHeight = Math.max(textHeight, 18); // Minimum height of 18
         
-        // Calculate sketch dimensions to fit within text height while preserving aspect ratio
-        let sketchWidth: number;
-        let sketchHeight: number;
+        // Use a fixed height for all sketches, with width calculated from aspect ratio
+        const fixedSketchHeight = Math.max(textHeight, 25); // Fixed height (min 25 to ensure visibility)
+        let sketchWidth = fixedSketchHeight * sketchInfo.aspectRatio;
+        let sketchHeight = fixedSketchHeight;
         
-        if (sketchInfo.aspectRatio >= 1) {
-          // Wide image (full rink) - width is limiting factor
+        // If width exceeds column, scale down proportionally
+        if (sketchWidth > sketchColumnWidth) {
           sketchWidth = sketchColumnWidth;
           sketchHeight = sketchWidth / sketchInfo.aspectRatio;
-          // If too tall, scale down
-          if (sketchHeight > maxSketchHeight) {
-            sketchHeight = maxSketchHeight;
-            sketchWidth = sketchHeight * sketchInfo.aspectRatio;
-          }
-        } else {
-          // Tall image (half rink) - height is limiting factor
-          sketchHeight = maxSketchHeight;
-          sketchWidth = sketchHeight * sketchInfo.aspectRatio;
-          // If too wide, scale down
-          if (sketchWidth > sketchColumnWidth) {
-            sketchWidth = sketchColumnWidth;
-            sketchHeight = sketchWidth / sketchInfo.aspectRatio;
-          }
         }
         
         const imgX = pageWidth - 10 - sketchWidth;
@@ -165,7 +204,7 @@ function renderTimelineItemsToPDF(
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(59, 130, 246);
-      doc.text(`PARALLEL (${item.groups.length} groups, ${secondsToDurationString(duration)})`, 12 + indent, y);
+      doc.text(`PARALLEL GROUPS(${item.groups.length} groups, ${secondsToDurationString(duration)})`, 12 + indent, y);
       doc.setTextColor(0, 0, 0);
       y += 4;
 
@@ -175,20 +214,43 @@ function renderTimelineItemsToPDF(
           y = 12;
         }
 
+        // Parse group color from hex to RGB
+        const hexToRgb = (hex: string) => {
+          const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+          return result ? {
+            r: parseInt(result[1], 16),
+            g: parseInt(result[2], 16),
+            b: parseInt(result[3], 16)
+          } : { r: 59, g: 130, b: 246 }; // Default to blue
+        };
+        const groupColor = hexToRgb(group.color);
+
+        // Group header - colored, uppercase with "GROUP" appended
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(8);
-        doc.text(`${group.name}:`, 14 + indent, y);
+        doc.setTextColor(groupColor.r, groupColor.g, groupColor.b);
+        doc.text(`${group.name.toUpperCase()} GROUP:`, 14 + indent, y);
+        doc.setTextColor(0, 0, 0);
         y += 3.5;
 
+        const drillsStartY = y;
         if (group.items.length === 0) {
           doc.setFont('helvetica', 'italic');
           doc.setFontSize(7);
-          doc.text('No drills', 16 + indent, y);
+          doc.text('No drills', 20 + indent, y);
           y += 3;
         } else {
           const groupDrillIndex = { value: 1 };
-          y = renderTimelineItemsToPDF(doc, group.items, y, pageWidth, indent + 6, groupDrillIndex);
+          y = renderTimelineItemsToPDF(doc, group.items, y, pageWidth, indent + 10, groupDrillIndex);
         }
+        
+        // Draw vertical line spanning all drills in this group (ends at last text line)
+        const lineX = 16 + indent;
+        doc.setDrawColor(groupColor.r, groupColor.g, groupColor.b);
+        doc.setLineWidth(0.5);
+        doc.line(lineX, drillsStartY - 1, lineX, y - 3);
+        doc.setDrawColor(0, 0, 0); // Reset to black
+        
         y += 1;
       }
       y += 2;
@@ -269,6 +331,21 @@ export async function exportPracticePlanToPDF(plan: PracticePlan) {
         y += objLines.length * 3.5;
       }
       
+      if (item.drill.setup) {
+        const setupBullets = splitSetupIntoBullets(item.drill.setup);
+        if (setupBullets.length > 1) {
+          for (const bullet of setupBullets) {
+            const bulletLines = doc.splitTextToSize(`• ${bullet}`, pageWidth - 27);
+            doc.text(bulletLines, 16, y);
+            y += bulletLines.length * 3.5;
+          }
+        } else {
+          const setupLines = doc.splitTextToSize(item.drill.setup, pageWidth - 25);
+          doc.text(setupLines, 14, y);
+          y += setupLines.length * 3.5;
+        }
+      }
+      
       if (item.drill.execution) {
         const execLines = doc.splitTextToSize(`Execution: ${item.drill.execution}`, pageWidth - 25);
         doc.text(execLines, 14, y);
@@ -276,9 +353,19 @@ export async function exportPracticePlanToPDF(plan: PracticePlan) {
       }
       
       if (item.drill.coachingPoints) {
-        const cpLines = doc.splitTextToSize(`Coaching Points: ${item.drill.coachingPoints}`, pageWidth - 25);
-        doc.text(cpLines, 14, y);
-        y += cpLines.length * 3.5;
+        doc.setFont('helvetica', 'bold');
+        doc.text('Coaching Points: ', 14, y);
+        const labelWidth = doc.getTextWidth('Coaching Points: ');
+        doc.setFont('helvetica', 'normal');
+        const cpLines = doc.splitTextToSize(item.drill.coachingPoints, pageWidth - 25 - labelWidth);
+        doc.text(cpLines[0], 14 + labelWidth, y);
+        if (cpLines.length > 1) {
+          for (let i = 1; i < cpLines.length; i++) {
+            y += 3.5;
+            doc.text(cpLines[i], 14, y);
+          }
+        }
+        y += 3.5;
       }
       
       y += 3;
@@ -336,6 +423,20 @@ function generateTimelineItemParagraphs(
         contentRuns.push(new TextRun({ text: 'Obj: ', bold: true, size: fontSize }));
         contentRuns.push(new TextRun({ text: item.drill.objective, size: fontSize }));
       }
+      if (item.drill.setup) {
+        const setupBullets = splitSetupIntoBullets(item.drill.setup);
+        contentRuns.push(new TextRun({ text: ' | ', size: fontSize, color: '999999' }));
+        if (setupBullets.length > 1) {
+          // Multiple sentences - show as bullet points
+          setupBullets.forEach((bullet, idx) => {
+            if (idx > 0) contentRuns.push(new TextRun({ text: ' ', size: fontSize }));
+            contentRuns.push(new TextRun({ text: `• ${bullet}`, size: fontSize }));
+          });
+        } else {
+          // Single sentence - show inline without label
+          contentRuns.push(new TextRun({ text: item.drill.setup, size: fontSize }));
+        }
+      }
       if (item.drill.execution) {
         contentRuns.push(new TextRun({ text: ' | ', size: fontSize, color: '999999' }));
         contentRuns.push(new TextRun({ text: 'Exec: ', bold: true, size: fontSize }));
@@ -357,20 +458,16 @@ function generateTimelineItemParagraphs(
         try {
           const imageData = base64ToUint8Array(sketchInfo.imagePreview);
           
-          // Dynamic sizing: constrain by height for half-rink, by width for full-rink
-          const maxHeight = 70; // Max height in pixels - keeps sketches compact
-          const maxWidth = 100;
-          let imgWidth: number;
-          let imgHeight: number;
+          // Fixed height for all sketches, width calculated from aspect ratio
+          const fixedHeight = 70; // Fixed height in pixels for all sketch types
+          const maxWidth = 120; // Max width to prevent overflow
+          let imgHeight = fixedHeight;
+          let imgWidth = Math.round(fixedHeight * sketchInfo.aspectRatio);
           
-          if (sketchInfo.aspectRatio >= 1) {
-            // Wide image (full rink) - constrain by width
+          // If width exceeds max, scale down proportionally
+          if (imgWidth > maxWidth) {
             imgWidth = maxWidth;
             imgHeight = Math.round(imgWidth / sketchInfo.aspectRatio);
-          } else {
-            // Tall image (half rink) - constrain by height
-            imgHeight = maxHeight;
-            imgWidth = Math.round(imgHeight * sketchInfo.aspectRatio);
           }
           
           const table = new Table({
@@ -443,21 +540,36 @@ function generateTimelineItemParagraphs(
       );
 
       for (const group of item.groups) {
+        // Get group color without # prefix for docx
+        const groupColorHex = group.color.replace('#', '');
+        
+        // Group header - colored, uppercase with "GROUP" appended
         paragraphs.push(
           new Paragraph({
             indent: { left: (indent + 1) * smallIndent },
-            children: [new TextRun({ text: `${group.name}:`, bold: true, size: 18 })],
+            children: [new TextRun({ text: `${group.name.toUpperCase()} GROUP:`, bold: true, size: 18, color: groupColorHex })],
           })
         );
 
         if (group.items.length === 0) {
           paragraphs.push(new Paragraph({
             indent: { left: (indent + 2) * smallIndent },
+            border: { left: { style: 'single' as const, size: 12, color: groupColorHex } },
             children: [new TextRun({ text: 'No drills', italics: true, size: 16 })],
           }));
         } else {
           const groupDrillIndex = { value: 1 };
-          paragraphs.push(...generateTimelineItemParagraphs(group.items, groupDrillIndex, indent + 2));
+          // Get group paragraphs and add left border to each
+          const groupParagraphs = generateTimelineItemParagraphs(group.items, groupDrillIndex, indent + 2);
+          for (const para of groupParagraphs) {
+            if (para instanceof Paragraph) {
+              // Add left border for vertical line effect with group color
+              (para as Paragraph & { border?: unknown }).border = { 
+                left: { style: 'single' as const, size: 12, color: groupColorHex } 
+              };
+            }
+          }
+          paragraphs.push(...groupParagraphs);
         }
       }
     }
@@ -498,6 +610,13 @@ export async function exportPracticePlanToWord(plan: PracticePlan) {
             width: { size: 60, type: WidthType.PERCENTAGE },
             children: [
               item.drill.objective ? new Paragraph({ children: [new TextRun({ text: 'Objective: ', bold: true }), new TextRun(item.drill.objective)] }) : new Paragraph(''),
+              ...(item.drill.setup ? (() => {
+                const bullets = splitSetupIntoBullets(item.drill.setup);
+                if (bullets.length > 1) {
+                  return bullets.map(bullet => new Paragraph({ children: [new TextRun({ text: `• ${bullet}` })] }));
+                }
+                return [new Paragraph({ children: [new TextRun(item.drill.setup)] })];
+              })() : [new Paragraph('')]),
               item.drill.execution ? new Paragraph({ children: [new TextRun({ text: 'Execution: ', bold: true }), new TextRun(item.drill.execution)] }) : new Paragraph(''),
               item.drill.coachingPoints ? new Paragraph({ children: [new TextRun({ text: 'Coaching Points: ', bold: true }), new TextRun(item.drill.coachingPoints)] }) : new Paragraph(''),
             ],
@@ -610,6 +729,14 @@ function generateTimelineItemsHtml(
       // Compact: combine fields with separators
       const details: string[] = [];
       if (item.drill.objective) details.push(`<strong>Obj:</strong> ${item.drill.objective}`);
+      if (item.drill.setup) {
+        const setupBullets = splitSetupIntoBullets(item.drill.setup);
+        if (setupBullets.length > 1) {
+          details.push(`<ul style="margin:0;padding-left:16px;">${setupBullets.map(b => `<li>${b}</li>`).join('')}</ul>`);
+        } else {
+          details.push(item.drill.setup);
+        }
+      }
       if (item.drill.execution) details.push(`<strong>Exec:</strong> ${item.drill.execution}`);
       if (item.drill.coachingPoints) details.push(`<strong>Tips:</strong> ${item.drill.coachingPoints}`);
       if (hasVariations) details.push(`<strong>Vars:</strong> ${item.selectedVariations!.join(', ')}`);
@@ -649,10 +776,10 @@ function generateTimelineItemsHtml(
       for (const group of item.groups) {
         html += `
           <div class="group" style="border: 2px solid ${group.color}40; border-radius: 8px; overflow: hidden;">
-            <div class="group-header" style="background: ${group.color}20; padding: 8px 12px; font-weight: bold; color: ${group.color};">
-              ${group.name}
+            <div class="group-header" style="background: ${group.color}20; padding: 8px 12px; font-weight: bold; color: ${group.color}; text-transform: uppercase;">
+              ${group.name.toUpperCase()} GROUP:
             </div>
-            <div class="group-content" style="padding: 10px;">
+            <div class="group-content" style="padding: 10px; border-left: 3px solid ${group.color}; margin-left: 4px;">
         `;
 
         if (group.items.length === 0) {
@@ -691,14 +818,26 @@ export async function printPracticePlan(plan: PracticePlan) {
     timelineHtml = generateTimelineItemsHtml(normalizedPlan.timeline);
   } else {
     // Fallback to legacy drills
-    timelineHtml = normalizedPlan.drills.map((item, index) => `
+    timelineHtml = normalizedPlan.drills.map((item, index) => {
+      let setupHtml = '';
+      if (item.drill.setup) {
+        const bullets = splitSetupIntoBullets(item.drill.setup);
+        if (bullets.length > 1) {
+          setupHtml = `<ul style="margin:4px 0;padding-left:16px;">${bullets.map(b => `<li>${b}</li>`).join('')}</ul>`;
+        } else {
+          setupHtml = `<p>${item.drill.setup}</p>`;
+        }
+      }
+      return `
       <div class="drill">
         <h3>${index + 1}. ${item.drill.name} <span class="time">(${item.drill.duration})</span></h3>
         ${item.drill.objective ? `<p><strong>Objective:</strong> ${item.drill.objective}</p>` : ''}
+        ${setupHtml}
         ${item.drill.execution ? `<p><strong>Execution:</strong> ${item.drill.execution}</p>` : ''}
         ${item.drill.coachingPoints ? `<p><strong>Coaching Points:</strong> ${item.drill.coachingPoints}</p>` : ''}
       </div>
-    `).join('');
+    `;
+    }).join('');
   }
 
   const html = `

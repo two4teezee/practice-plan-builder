@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from './supabase';
-import type { Drill, PracticePlan, PracticePlanDrill, TimelineItem } from './types';
+import type { Drill, PracticePlan, PracticePlanDrill, TimelineItem, Location } from './types';
 
 // ============================================
 // Database Row Types (snake_case from Supabase)
@@ -21,8 +21,11 @@ interface DrillRow {
   video_link: string;
   pdf_link: string;
   sketch_data: string | null;
+  tags: string[] | null;
   created_at: string;
   updated_at: string;
+  created_by: string | null;
+  updated_by: string | null;
 }
 
 interface PracticePlanRow {
@@ -31,7 +34,7 @@ interface PracticePlanRow {
   description: string;
   date: string;
   duration: string;
-  location: string;
+  location: Location | null;  // JSONB from database
   notes: string;
   equipment: string;
   timeline: TimelineItem[];
@@ -61,8 +64,11 @@ function drillRowToApp(row: DrillRow): Drill {
     videoLink: row.video_link || '',
     pdfLink: row.pdf_link || '',
     sketchData: row.sketch_data || undefined,
+    tags: row.tags || [],
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
+    createdBy: row.created_by ? { id: row.created_by } : null,
+    updatedBy: row.updated_by ? { id: row.updated_by } : null,
   };
 }
 
@@ -82,17 +88,34 @@ function drillAppToRow(drill: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>): Om
     video_link: drill.videoLink,
     pdf_link: drill.pdfLink,
     sketch_data: drill.sketchData || null,
+    tags: drill.tags || [],
+    // Audit fields are set separately in createDrill/updateDrill
+    created_by: null,
+    updated_by: null,
   };
 }
 
 function practicePlanRowToApp(row: PracticePlanRow): PracticePlan {
+  // Parse location - handle both JSONB object and legacy string format
+  let location: Location | null = null;
+  if (row.location) {
+    if (typeof row.location === 'object') {
+      // Ensure backward compatibility - older records may not have 'name' field
+      location = {
+        ...row.location,
+        name: row.location.name || row.location.formattedAddress,
+      };
+    }
+    // Legacy string locations are ignored (migrated to null)
+  }
+
   return {
     id: row.id,
     name: row.name,
     description: row.description || '',
     date: new Date(row.date),
     duration: row.duration as PracticePlan['duration'],
-    location: row.location || '',
+    location,
     notes: row.notes || '',
     equipment: row.equipment || '',
     timeline: row.timeline || [],
@@ -160,27 +183,114 @@ export async function getDrill(id: string): Promise<Drill | null> {
   return data ? drillRowToApp(data) : null;
 }
 
+// Fetch a drill with full audit info (creator and modifier profile details)
+// This function is resilient - it falls back gracefully if audit columns don't exist
+export async function getDrillWithAuditInfo(id: string): Promise<Drill | null> {
+  // First, fetch the basic drill
+  const drill = await getDrill(id);
+  if (!drill) return null;
+  
+  // If the drill has creator/updater IDs, try to fetch their profile info
+  const userIds = new Set<string>();
+  if (drill.createdBy?.id) userIds.add(drill.createdBy.id);
+  if (drill.updatedBy?.id) userIds.add(drill.updatedBy.id);
+  
+  if (userIds.size === 0) {
+    // No audit info to fetch
+    return drill;
+  }
+  
+  // Fetch profiles for the user IDs
+  try {
+    const { data: profiles, error } = await supabase
+      .from('profiles')
+      .select('id, email, full_name')
+      .in('id', Array.from(userIds));
+    
+    if (error || !profiles) {
+      // If we can't fetch profiles, return drill with just the IDs
+      return drill;
+    }
+    
+    // Build a map of profiles
+    const profileMap = new Map(profiles.map(p => [p.id, p]));
+    
+    // Enrich drill with profile info
+    if (drill.createdBy?.id) {
+      const profile = profileMap.get(drill.createdBy.id);
+      if (profile) {
+        drill.createdBy = {
+          id: profile.id,
+          fullName: profile.full_name || undefined,
+          email: profile.email,
+        };
+      }
+    }
+    
+    if (drill.updatedBy?.id) {
+      const profile = profileMap.get(drill.updatedBy.id);
+      if (profile) {
+        drill.updatedBy = {
+          id: profile.id,
+          fullName: profile.full_name || undefined,
+          email: profile.email,
+        };
+      }
+    }
+    
+    return drill;
+  } catch (err) {
+    // If anything fails, just return the drill with basic audit info
+    console.warn('Could not fetch audit profile info:', err);
+    return drill;
+  }
+}
+
 export async function getDrillByName(name: string): Promise<Drill | null> {
+  if (!name || !name.trim()) {
+    return null;
+  }
+  
   const { data, error } = await supabase
     .from('drills')
     .select('*')
-    .eq('name', name)
+    .eq('name', name.trim())
     .maybeSingle();
   
   if (error) {
-    console.error('Error fetching drill by name:', error);
+    // Log full error details for debugging
+    console.error('Error fetching drill by name:', {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      name: name
+    });
+    // Don't throw on permission errors - just return null to allow save to proceed
+    // The actual save operation will properly handle permission issues
+    if (error.code === 'PGRST116' || error.code === '42501') {
+      return null;
+    }
     throw error;
   }
   
   return data ? drillRowToApp(data) : null;
 }
 
-export async function createDrill(drill: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>): Promise<Drill> {
+export async function createDrill(
+  drill: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>,
+  userId?: string
+): Promise<Drill> {
   const row = drillAppToRow(drill);
+  
+  // Add audit fields if userId is provided
+  const rowWithAudit = userId 
+    ? { ...row, created_by: userId, updated_by: userId }
+    : row;
   
   const { data, error } = await supabase
     .from('drills')
-    .insert(row)
+    .insert(rowWithAudit)
     .select()
     .single();
   
@@ -192,7 +302,11 @@ export async function createDrill(drill: Omit<Drill, 'id' | 'createdAt' | 'updat
   return drillRowToApp(data);
 }
 
-export async function updateDrill(id: string, drill: Partial<Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>>): Promise<Drill> {
+export async function updateDrill(
+  id: string,
+  drill: Partial<Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>>,
+  userId?: string
+): Promise<Drill> {
   // Convert partial app fields to partial row fields
   const updates: Record<string, unknown> = {};
   if (drill.name !== undefined) updates.name = drill.name;
@@ -209,6 +323,12 @@ export async function updateDrill(id: string, drill: Partial<Omit<Drill, 'id' | 
   if (drill.videoLink !== undefined) updates.video_link = drill.videoLink;
   if (drill.pdfLink !== undefined) updates.pdf_link = drill.pdfLink;
   if (drill.sketchData !== undefined) updates.sketch_data = drill.sketchData;
+  if (drill.tags !== undefined) updates.tags = drill.tags;
+  
+  // Set updated_by if userId is provided
+  if (userId) {
+    updates.updated_by = userId;
+  }
   
   const { data, error } = await supabase
     .from('drills')
@@ -514,126 +634,39 @@ export const seedDrills: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>[] = [
     description: 'Administrative time for ice setup and player warm-ups',
     videoLink: '',
     pdfLink: '',
+    tags: ['Warmup'],
   },
   {
-    name: 'Warm-up Skating',
-    category: 'Skating',
-    duration: '5:00',
-    skillFocus: 'Skating',
-    objective: 'Get players warmed up and ready for practice',
-    setup: 'Players line up on the goal line',
-    execution: 'Skate around the rink with various skating techniques: forward, backward, crossovers',
-    coachingPoints: 'Focus on proper skating form, knee bend, and arm movement',
-    variations: 'Add puck handling, increase speed, add stops and starts',
+    name: 'Water Break',
+    category: 'Admin',
+    duration: '2:00',
+    skillFocus: 'Other',
+    objective: 'Set up next drill while players take a water break',
+    setup: 'Players take a water break',
+    execution: 'Players take a water break',
+    coachingPoints: 'Use this time efficiently to set up for the next drill',
+    variations: '',
     equipment: '',
-    description: 'Basic warm-up skating drill to get blood flowing',
+    description: 'Administrative time for water break',
     videoLink: '',
     pdfLink: '',
+    tags: [],
   },
   {
-    name: 'Two-Line Passing',
-    category: 'Passing',
+    name: 'Scrimmage',
+    category: 'Scrimmage',
     duration: '10:00',
-    skillFocus: 'Passing',
-    objective: 'Improve passing accuracy and receiving skills',
-    setup: 'Two lines facing each other at center ice, 20 feet apart',
-    execution: 'Pass back and forth, focusing on tape-to-tape passes',
-    coachingPoints: 'Cup the puck on reception, follow through on passes, eyes up',
-    variations: 'Increase distance, add movement, use saucer passes',
+    skillFocus: 'Other',
+    objective: 'Players scrimmage',
+    setup: 'Players scrimmage',
+    execution: 'Players scrimmage',
+    coachingPoints: 'Use this time efficiently to scrimmage',
+    variations: '',
     equipment: '',
-    description: 'Classic passing drill for all skill levels',
+    description: 'Scrimmage time',
     videoLink: '',
     pdfLink: '',
-  },
-  {
-    name: 'Shooting Stations',
-    category: 'Shooting',
-    duration: '15:00',
-    skillFocus: 'Shooting',
-    objective: 'Practice various shot types from different positions',
-    setup: 'Set up 4 stations around the offensive zone with puck piles',
-    execution: 'Rotate through stations taking wrist shots, slap shots, snap shots, and one-timers',
-    coachingPoints: 'Quick release, pick corners, follow through toward target',
-    variations: 'Add defenders, time limit per station, competition between groups',
-    equipment: '4 Cones, 2 Nets, Shooter Tutor',
-    description: 'Multi-station shooting drill for comprehensive shooting practice',
-    videoLink: '',
-    pdfLink: '',
-  },
-  {
-    name: 'Box Drill',
-    category: 'Defensive',
-    duration: '8:00',
-    skillFocus: 'Defensive',
-    objective: 'Practice defensive positioning and gap control',
-    setup: 'Create a box with 4 cones in the neutral zone',
-    execution: 'Defender skates backward maintaining proper gap while attacker tries to enter the box',
-    coachingPoints: 'Stay between attacker and net, stick on ice, active feet',
-    variations: 'Add second attacker, allow breakouts, add puck',
-    equipment: '4 Cones',
-    description: 'Defensive positioning drill emphasizing gap control',
-    videoLink: '',
-    pdfLink: '',
-  },
-  {
-    name: '2-on-1 Rush',
-    category: 'Offensive',
-    duration: '12:00',
-    skillFocus: 'Offensive',
-    objective: 'Practice 2-on-1 situations with quick decision making',
-    setup: 'Two lines at center ice, one defender at blue line',
-    execution: 'Two forwards attack against one defender, focus on give-and-go or shot',
-    coachingPoints: 'Read the defender, make quick decisions, shoot if lane is open',
-    variations: '3-on-2, add backchecker, start from different positions',
-    equipment: 'Nets',
-    description: 'Classic odd-man rush drill for offensive creativity',
-    videoLink: '',
-    pdfLink: '',
-  },
-  {
-    name: 'Figure 8 Skating',
-    category: 'Skating',
-    duration: '6:00',
-    skillFocus: 'Skating',
-    objective: 'Improve edge work and crossovers',
-    setup: 'Place two cones 30 feet apart at center ice',
-    execution: 'Skate figure 8 patterns around the cones using crossovers',
-    coachingPoints: 'Deep knee bend on crossovers, push with both edges, keep head up',
-    variations: 'Add puck, change direction, increase speed',
-    equipment: '2 Cones',
-    description: 'Edge work and crossover development drill',
-    videoLink: '',
-    pdfLink: '',
-  },
-  {
-    name: 'Tire Agility Course',
-    category: 'Skating',
-    duration: '8:00',
-    skillFocus: 'Skating',
-    objective: 'Improve agility, balance, and quick feet',
-    setup: 'Set up tires in a zigzag pattern across the ice',
-    execution: 'Players skate through the tires, stepping over and around them',
-    coachingPoints: 'Keep knees bent, quick feet, stay low',
-    variations: 'Add puck, race format, backwards skating',
-    equipment: '6 Tires, 4 Cones',
-    description: 'Agility drill using tires for footwork development',
-    videoLink: '',
-    pdfLink: '',
-  },
-  {
-    name: 'Border Patrol Passing',
-    category: 'Passing',
-    duration: '10:00',
-    skillFocus: 'Passing',
-    objective: 'Improve passing accuracy under pressure',
-    setup: 'Set up border patrol barriers creating passing lanes',
-    execution: 'Players must pass through the barriers to teammates',
-    coachingPoints: 'Accurate passes, read the lanes, quick decisions',
-    variations: 'Add defenders, time pressure, moving targets',
-    equipment: '2 Border Patrol, 4 Cones',
-    description: 'Passing drill using barriers to create realistic lanes',
-    videoLink: '',
-    pdfLink: '',
+    tags: ['Small Game', 'Compete'],
   },
 ];
 
