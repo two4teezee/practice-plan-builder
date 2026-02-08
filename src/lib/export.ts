@@ -210,7 +210,7 @@ function renderTimelineItemsToPDF(
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8);
       doc.setTextColor(59, 130, 246);
-      doc.text(`PARALLEL GROUPS(${item.groups.length} groups, ${secondsToDurationString(duration)})`, 12 + indent, y);
+      doc.text(`PARALLEL GROUPS (${item.groups.length} groups, ${secondsToDurationString(duration)})`, 12 + indent, y);
       doc.setTextColor(0, 0, 0);
       y += 4;
 
@@ -774,7 +774,7 @@ function generateTimelineItemsHtml(
       html += `
         <div class="parallel-split">
           <div class="parallel-header">
-            <strong>PARALLEL GROUPS</strong> 
+            <strong>PARALLEL GROUPS </strong> 
             <span class="meta">(${item.groups.length} groups, ${secondsToDurationString(duration)})</span>
           </div>
           <div class="parallel-groups" style="display: grid; grid-template-columns: repeat(${item.groups.length}, 1fr); gap: 15px;">
