@@ -17,6 +17,7 @@ import type {
   PracticePlanDrill, 
   Drill,
   PracticeDuration,
+  EquipmentOption,
   Location,
 } from '@/lib/types';
 import type { TimelineItem } from '@/lib/types';
@@ -25,7 +26,6 @@ import {
   parsePracticeDurationToSeconds,
   parseEquipmentString,
   equipmentSelectionsToString,
-  EQUIPMENT_OPTIONS,
   getTimelineDuration,
   flattenTimelineDrills,
   convertDrillsToTimeline,
@@ -79,6 +79,12 @@ const getDefaultFormData = () => ({
   location: null as Location | null,
   notes: '',
 });
+
+const getLocationLabel = (location: PracticePlan['location']) => {
+  if (!location) return '';
+  if (typeof location === 'string') return location;
+  return location.name || location.formattedAddress || '';
+};
 
 export default function CreatePracticePlanPage() {
   const [isPickerOpen, setIsPickerOpen] = useState(false);
@@ -226,7 +232,7 @@ export default function CreatePracticePlanPage() {
     // Convert back to string format
     const consolidatedSelections = Array.from(maxQuantities.entries())
       .map(([item, quantity]) => ({ 
-        item: item as typeof EQUIPMENT_OPTIONS[number], 
+        item: item as EquipmentOption, 
         quantity 
       }));
     
@@ -1005,7 +1011,7 @@ export default function CreatePracticePlanPage() {
                         {plan.location && (
                           <span className="flex items-center gap-1">
                             <MapPin className="w-3.5 h-3.5" />
-                            {plan.location}
+                            {getLocationLabel(plan.location)}
                           </span>
                         )}
                       </div>
