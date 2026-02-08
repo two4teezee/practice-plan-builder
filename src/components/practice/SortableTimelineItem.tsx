@@ -2,13 +2,14 @@
 
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { TimelineItem, DrillItem } from '@/lib/types';
-import { DRILL_DURATIONS, parseVariations } from '@/lib/types';
-import { GripVertical, X, ChevronDown, ChevronUp, Clock, Layers } from 'lucide-react';
+import type { TimelineItem, DrillItem, Drill } from '@/lib/types';
+import { DRILL_DURATIONS, parseVariations, getEffectiveDrill, hasDrillOverrides } from '@/lib/types';
+import { GripVertical, X, ChevronDown, ChevronUp, Clock, Layers, Pencil, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ParallelGroupEditor } from './ParallelGroupEditor';
+import { PracticeDrillEditModal } from './PracticeDrillEditModal';
 
 interface SortableTimelineItemProps {
   item: TimelineItem;
@@ -24,6 +25,7 @@ interface SortableTimelineItemProps {
   onRemoveGroup: (parallelId: string, groupId: string) => void;
   onRemoveParallelSplit: (id: string) => void;
   onUpdateGroupName: (parallelId: string, groupId: string, name: string) => void;
+  onUpdateOverrides?: (id: string, overrides: Partial<Drill> | undefined) => void;
   depth?: number;
   parentPath?: string[];
   compact?: boolean;
@@ -181,11 +183,13 @@ export function SortableTimelineItem({
   onRemoveGroup,
   onRemoveParallelSplit,
   onUpdateGroupName,
+  onUpdateOverrides,
   depth = 0,
   parentPath = [],
   compact = false,
 }: SortableTimelineItemProps) {
   const [expanded, setExpanded] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   
   const {
     attributes,
@@ -227,6 +231,7 @@ export function SortableTimelineItem({
               onRemoveGroup={onRemoveGroup}
               onRemoveParallelSplit={onRemoveParallelSplit}
               onUpdateGroupName={onUpdateGroupName}
+              onUpdateOverrides={onUpdateOverrides}
               depth={depth}
               parentPath={parentPath}
             />
@@ -250,84 +255,133 @@ export function SortableTimelineItem({
     Other: 'border-l-gray-500',
   };
 
-  const effectiveDuration = drillItem.customDuration || drillItem.drill.duration;
+  // Get effective drill with overrides applied
+  const effectiveDrill = getEffectiveDrill(drillItem);
+  const hasOverrides = hasDrillOverrides(drillItem);
+  
+  const effectiveDuration = drillItem.customDuration || effectiveDrill.duration;
   const isCustomDuration = drillItem.customDuration && drillItem.customDuration !== drillItem.drill.duration;
   
-  // Parse variations from the drill
-  const availableVariations = parseVariations(drillItem.drill.variations);
+  // Parse variations from the effective drill
+  const availableVariations = parseVariations(effectiveDrill.variations);
   const hasVariations = availableVariations.length > 0;
   const selectedVariations = drillItem.selectedVariations || [];
+
+  // Handle override save
+  const handleSaveOverrides = (overrides: Partial<Drill>) => {
+    if (onUpdateOverrides) {
+      onUpdateOverrides(drillItem.id, Object.keys(overrides).length > 0 ? overrides : undefined);
+    }
+  };
+
+  // Handle override reset
+  const handleResetOverrides = () => {
+    if (onUpdateOverrides) {
+      onUpdateOverrides(drillItem.id, undefined);
+    }
+  };
 
   // Compact version for side-by-side group display
   if (compact) {
     return (
-      <div
-        ref={setNodeRef}
-        style={style}
-        className={`
-          bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600
-          border-l-4 ${categoryColors[drillItem.drill.category]}
-          ${isDragging ? 'opacity-50 shadow-lg' : ''}
-        `}
-      >
-        <div className="flex items-center p-2 gap-2">
-          {/* Drag Handle */}
-          <button
-            {...attributes}
-            {...listeners}
-            className="drag-handle p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
-          >
-            <GripVertical className="w-4 h-4 text-gray-400" />
-          </button>
-
-          {/* Drill Info */}
-          <div className="flex-1 min-w-0">
-            <h4 className="text-sm font-medium text-gray-900 dark:text-white truncate">
-              {drillItem.drill.name}
-            </h4>
-          </div>
-
-          {/* Duration */}
-          <div className="flex items-center gap-1 flex-shrink-0">
-            <select
-              value={effectiveDuration}
-              onChange={(e) => onUpdateDuration(drillItem.id, e.target.value)}
-              className={`
-                px-1.5 py-0.5 text-xs rounded border
-                bg-white dark:bg-gray-600 
-                border-gray-200 dark:border-gray-500
-                text-gray-900 dark:text-white
-                focus:ring-1 focus:ring-primary-500
-                cursor-pointer
-                ${isCustomDuration ? 'ring-1 ring-primary-500/50' : ''}
-              `}
+      <>
+        <div
+          ref={setNodeRef}
+          style={style}
+          className={`
+            bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600
+            border-l-4 ${categoryColors[drillItem.drill.category]}
+            ${isDragging ? 'opacity-50 shadow-lg' : ''}
+            ${hasOverrides ? 'ring-1 ring-amber-500/30' : ''}
+          `}
+        >
+          <div className="flex items-center p-2 gap-2">
+            {/* Drag Handle */}
+            <button
+              {...attributes}
+              {...listeners}
+              className="drag-handle p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
             >
-              {DRILL_DURATIONS.map((d) => (
-                <option key={d} value={d}>{d}</option>
-              ))}
-            </select>
+              <GripVertical className="w-4 h-4 text-gray-400" />
+            </button>
+
+            {/* Drill Info */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1">
+                <h4 className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                  {drillItem.drill.name}
+                </h4>
+                {hasOverrides && (
+                  <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" title="Modified for this practice" />
+                )}
+              </div>
+            </div>
+
+            {/* Duration */}
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <select
+                value={effectiveDuration}
+                onChange={(e) => onUpdateDuration(drillItem.id, e.target.value)}
+                className={`
+                  px-1.5 py-0.5 text-xs rounded border
+                  bg-white dark:bg-gray-600 
+                  border-gray-200 dark:border-gray-500
+                  text-gray-900 dark:text-white
+                  focus:ring-1 focus:ring-primary-500
+                  cursor-pointer
+                  ${isCustomDuration ? 'ring-1 ring-primary-500/50' : ''}
+                `}
+              >
+                {DRILL_DURATIONS.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Variations Dropdown (only if drill has variations) */}
+            {hasVariations && (
+              <VariationsDropdown
+                variations={availableVariations}
+                selectedVariations={selectedVariations}
+                onUpdate={(vars) => onUpdateVariations(drillItem.id, vars)}
+                compact
+              />
+            )}
+
+            {/* Edit for this practice button */}
+            {onUpdateOverrides && (
+              <button
+                type="button"
+                onClick={() => setIsEditModalOpen(true)}
+                className={`p-0.5 hover:text-primary-700 dark:hover:text-primary-300 ${hasOverrides ? 'text-amber-500 dark:text-amber-400' : 'text-gray-400'}`}
+                title="Edit for this practice"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            {/* Remove */}
+            <button
+              type="button"
+              onClick={() => onRemove(drillItem.id)}
+              className="p-0.5 text-red-500 hover:text-red-700 dark:text-red-400"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
-
-          {/* Variations Dropdown (only if drill has variations) */}
-          {hasVariations && (
-            <VariationsDropdown
-              variations={availableVariations}
-              selectedVariations={selectedVariations}
-              onUpdate={(vars) => onUpdateVariations(drillItem.id, vars)}
-              compact
-            />
-          )}
-
-          {/* Remove */}
-          <button
-            type="button"
-            onClick={() => onRemove(drillItem.id)}
-            className="p-0.5 text-red-500 hover:text-red-700 dark:text-red-400"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
         </div>
-      </div>
+
+        {/* Practice Drill Edit Modal (for compact view) */}
+        {onUpdateOverrides && (
+          <PracticeDrillEditModal
+            isOpen={isEditModalOpen}
+            onClose={() => setIsEditModalOpen(false)}
+            drillItem={drillItem}
+            onSave={handleSaveOverrides}
+            onReset={handleResetOverrides}
+          />
+        )}
+      </>
     );
   }
 
@@ -361,9 +415,19 @@ export function SortableTimelineItem({
 
         {/* Drill Info */}
         <div className="flex-1 min-w-0">
-          <h4 className="font-medium text-gray-900 dark:text-white truncate">
-            {drillItem.drill.name}
-          </h4>
+          <div className="flex items-center gap-2">
+            <h4 className="font-medium text-gray-900 dark:text-white truncate">
+              {drillItem.drill.name}
+            </h4>
+            {hasOverrides && (
+              <span 
+                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                title="This drill has been modified for this practice"
+              >
+                Modified
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
             <span>{drillItem.drill.category}</span>
           </div>
@@ -405,6 +469,32 @@ export function SortableTimelineItem({
           />
         )}
 
+        {/* Edit for this practice button */}
+        {onUpdateOverrides && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setIsEditModalOpen(true)}
+            className={hasOverrides ? 'text-amber-600 dark:text-amber-400' : ''}
+            title="Edit for this practice"
+          >
+            <Pencil className="w-4 h-4" />
+          </Button>
+        )}
+
+        {/* Reset to library button (only show if has overrides) */}
+        {hasOverrides && onUpdateOverrides && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleResetOverrides}
+            className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20"
+            title="Reset to library version"
+          >
+            <RotateCcw className="w-4 h-4" />
+          </Button>
+        )}
+
         {/* Actions */}
         <Button
           size="sm"
@@ -431,27 +521,29 @@ export function SortableTimelineItem({
       {expanded && (
         <div className="px-4 pb-4 pt-0 border-t border-gray-100 dark:border-gray-700 mt-2">
           <div className="pt-3 space-y-2 text-sm">
-            {isCustomDuration && (
-              <div className="text-xs text-primary-600 dark:text-primary-400 mb-2">
-                Duration modified from default ({drillItem.drill.duration})
+            {(isCustomDuration || hasOverrides) && (
+              <div className="text-xs text-amber-600 dark:text-amber-400 mb-2">
+                {isCustomDuration && `Duration modified from default (${drillItem.drill.duration})`}
+                {isCustomDuration && hasOverrides && ' · '}
+                {hasOverrides && 'Content modified for this practice'}
               </div>
             )}
-            {drillItem.drill.objective && (
+            {effectiveDrill.objective && (
               <div>
                 <span className="font-medium text-gray-700 dark:text-gray-300">Objective: </span>
-                <span className="text-gray-600 dark:text-gray-400">{drillItem.drill.objective}</span>
+                <span className="text-gray-600 dark:text-gray-400">{effectiveDrill.objective}</span>
               </div>
             )}
-            {drillItem.drill.execution && (
+            {effectiveDrill.setup && (
               <div>
-                <span className="font-medium text-gray-700 dark:text-gray-300">Execution: </span>
-                <span className="text-gray-600 dark:text-gray-400">{drillItem.drill.execution}</span>
+                <span className="font-medium text-gray-700 dark:text-gray-300">Setup: </span>
+                <span className="text-gray-600 dark:text-gray-400">{effectiveDrill.setup}</span>
               </div>
             )}
-            {drillItem.drill.coachingPoints && (
+            {effectiveDrill.coachingPoints && (
               <div>
                 <span className="font-medium text-gray-700 dark:text-gray-300">Coaching Points: </span>
-                <span className="text-gray-600 dark:text-gray-400">{drillItem.drill.coachingPoints}</span>
+                <span className="text-gray-600 dark:text-gray-400">{effectiveDrill.coachingPoints}</span>
               </div>
             )}
             {selectedVariations.length > 0 && (
@@ -460,14 +552,25 @@ export function SortableTimelineItem({
                 <span className="text-gray-600 dark:text-gray-400">{selectedVariations.join(', ')}</span>
               </div>
             )}
-            {drillItem.drill.equipment && (
+            {effectiveDrill.equipment && (
               <div>
                 <span className="font-medium text-gray-700 dark:text-gray-300">Equipment: </span>
-                <span className="text-gray-600 dark:text-gray-400">{drillItem.drill.equipment}</span>
+                <span className="text-gray-600 dark:text-gray-400">{effectiveDrill.equipment}</span>
               </div>
             )}
           </div>
         </div>
+      )}
+
+      {/* Practice Drill Edit Modal */}
+      {onUpdateOverrides && (
+        <PracticeDrillEditModal
+          isOpen={isEditModalOpen}
+          onClose={() => setIsEditModalOpen(false)}
+          drillItem={drillItem}
+          onSave={handleSaveOverrides}
+          onReset={handleResetOverrides}
+        />
       )}
     </div>
   );

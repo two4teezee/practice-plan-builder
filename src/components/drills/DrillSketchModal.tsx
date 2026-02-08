@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
-import { Save, X, Eraser, Maximize2, Minimize2, Pencil, Minus, SplineIcon, GitBranch, MousePointer2, Trash2 } from 'lucide-react';
+import { Save, X, Eraser, Pencil, Minus, SplineIcon, GitBranch, MousePointer2, Trash2 } from 'lucide-react';
 
 interface DrillSketchModalProps {
   isOpen: boolean;
@@ -12,7 +12,7 @@ interface DrillSketchModalProps {
   initialSketchData?: string;
 }
 
-type RinkView = 'full' | 'half';
+type RinkView = 'full' | 'half' | 'neutral' | 'quarter';
 type LineColor = 'blue' | 'red' | 'black' | 'gray';
 type LineType = 'solid' | 'dashed' | 'double' | 'squiggly';
 type DrawMode = 'freehand' | 'line' | 'curve' | 'polyline';
@@ -39,6 +39,7 @@ interface PlacedObject {
   type: PlaceableType;
   x: number;
   y: number;
+  rotation?: number; // Radians, for rotatable objects (nets)
   playerNumber?: number; // Legacy: 1-5 for player type, 0 for coach
   playerColor?: PlayerColor; // blue, red, black, or gray for player type
   playerMarkerType?: PlayerMarkerType; // New: type of marker (plain, numbered, F, D, G, Fx, Dx, Xx, Ox)
@@ -72,6 +73,14 @@ const NHL = {
   neutralZoneDotFromBlue: 5,
 };
 
+const NET_DIMENSIONS = {
+  net: { width: 30, height: 20 },
+  smallNet: { width: 18, height: 12 },
+};
+
+const NET_ROTATION_HANDLE_OFFSET = 10;
+const NET_ROTATION_HANDLE_RADIUS = 4;
+
 export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }: DrillSketchModalProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [rinkView, setRinkView] = useState<RinkView>('half');
@@ -102,23 +111,76 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
   const [selectedStrokeId, setSelectedStrokeId] = useState<string | null>(null);
   const [isDraggingObject, setIsDraggingObject] = useState(false);
   const [isDraggingStroke, setIsDraggingStroke] = useState(false);
+  const [isRotatingObject, setIsRotatingObject] = useState(false);
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
   const [dragStartPoint, setDragStartPoint] = useState<Point | null>(null);
+  const [rotateStartAngle, setRotateStartAngle] = useState(0);
+  const [rotateStartRotation, setRotateStartRotation] = useState(0);
+
+  const resetSketchState = useCallback(() => {
+    setRinkView('half');
+    setLineColor('black');
+    setLineType('solid');
+    setDrawMode('freehand');
+    setIsDrawing(false);
+    setStrokes([]);
+    setCurrentStroke([]);
+    setLineStartPoint(null);
+    setCurvePoints([]);
+    setPolylinePoints([]);
+    setPlacedObjects([]);
+    setIsPlaceMode(false);
+    setPlaceableType('player');
+    setPlayerColor('blue');
+    setPlayerMarkerType('numbered');
+    setMarkerCounters({});
+    setIsSelectMode(false);
+    setSelectedObjectId(null);
+    setSelectedStrokeId(null);
+    setIsDraggingObject(false);
+    setIsDraggingStroke(false);
+    setIsRotatingObject(false);
+    setDragOffset({ x: 0, y: 0 });
+    setDragStartPoint(null);
+    setRotateStartAngle(0);
+    setRotateStartRotation(0);
+  }, []);
   
   // Canvas dimensions - maintain proper NHL aspect ratios
   // Full rink: 200 x 85 ft = 2.35:1 ratio
   // Half rink: ~80 x 85 ft (goal line to past blue line) = ~0.94:1 ratio
+  // Neutral zone: ~50 x 85 ft (between blue lines) = ~0.59:1 ratio
+  // Quarter ice: ~40 x 42.5 ft (half width, offensive zone) = ~0.94:1 ratio
   const CANVAS_WIDTH_FULL = 1000; // Wider for better visibility
   const CANVAS_HEIGHT_FULL = Math.round(1000 * (NHL.rinkWidth / NHL.rinkLength)); // ~425px
   const CANVAS_WIDTH_HALF = 550; // Smaller width to fit in modal
   const CANVAS_HEIGHT_HALF = Math.round(550 * (80 / NHL.rinkWidth)); // ~518px, maintains proper aspect
+  const CANVAS_WIDTH_NEUTRAL = 550; // Same width as half rink
+  const CANVAS_HEIGHT_NEUTRAL = Math.round(550 * (50 / NHL.rinkWidth)); // ~324px for neutral zone
+  const CANVAS_WIDTH_QUARTER = 400; // Smaller for quarter ice
+  const CANVAS_HEIGHT_QUARTER = Math.round(400 * (50 / (NHL.rinkWidth / 2))); // ~471px, half width, 50ft depth
   
-  const canvasWidth = rinkView === 'full' ? CANVAS_WIDTH_FULL : CANVAS_WIDTH_HALF;
-  const canvasHeight = rinkView === 'full' ? CANVAS_HEIGHT_FULL : CANVAS_HEIGHT_HALF;
+  const getCanvasDimensions = () => {
+    switch (rinkView) {
+      case 'full':
+        return { width: CANVAS_WIDTH_FULL, height: CANVAS_HEIGHT_FULL };
+      case 'half':
+        return { width: CANVAS_WIDTH_HALF, height: CANVAS_HEIGHT_HALF };
+      case 'neutral':
+        return { width: CANVAS_WIDTH_NEUTRAL, height: CANVAS_HEIGHT_NEUTRAL };
+      case 'quarter':
+        return { width: CANVAS_WIDTH_QUARTER, height: CANVAS_HEIGHT_QUARTER };
+      default:
+        return { width: CANVAS_WIDTH_HALF, height: CANVAS_HEIGHT_HALF };
+    }
+  };
+  
+  const { width: canvasWidth, height: canvasHeight } = getCanvasDimensions();
 
   // Load initial sketch data
   useEffect(() => {
-    if (initialSketchData && isOpen) {
+    if (!isOpen) return;
+    if (initialSketchData) {
       try {
         const data = JSON.parse(initialSketchData);
         if (data.strokes) {
@@ -146,12 +208,12 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         }
       } catch {
         // Invalid data, start fresh
-        setStrokes([]);
-        setPlacedObjects([]);
-        setMarkerCounters({});
+        resetSketchState();
       }
+    } else {
+      resetSketchState();
     }
-  }, [initialSketchData, isOpen]);
+  }, [initialSketchData, isOpen, resetSketchState]);
 
   // Draw hockey rink with NHL-accurate proportions
   const drawRink = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number, view: RinkView) => {
@@ -401,7 +463,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         });
       });
       
-    } else {
+    } else if (view === 'half') {
       // Half rink view (offensive zone) - show from behind goal to past blue line
       // We'll show ~80 ft of length (11 behind goal + 64 to blue + 5 into neutral zone)
       const halfRinkLength = 80;
@@ -574,6 +636,248 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       
       ctx.beginPath();
       ctx.arc(faceOffXRight, neutralDotY, dotRadius, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (view === 'neutral') {
+      // Neutral zone view - area between blue lines
+      // 50 ft long (from blue line to blue line), 85 ft wide
+      const neutralZoneLength = 50;
+      const scale = rinkPixelWidth / NHL.rinkWidth; // Scale based on width (85 ft)
+      
+      const effectiveScale = Math.min(scale, rinkPixelHeight / neutralZoneLength);
+      const actualRinkWidth = NHL.rinkWidth * effectiveScale;
+      const actualRinkDepth = neutralZoneLength * effectiveScale;
+      
+      const horizontalOffset = (rinkPixelWidth - actualRinkWidth) / 2;
+      const verticalOffset = (rinkPixelHeight - actualRinkDepth) / 2;
+      
+      const rinkLeft = padding + horizontalOffset;
+      const rinkRight = rinkLeft + actualRinkWidth;
+      const rinkTop = padding + verticalOffset;
+      const rinkBottom = rinkTop + actualRinkDepth;
+      const rinkCenterX = (rinkLeft + rinkRight) / 2;
+      const rinkCenterY = (rinkTop + rinkBottom) / 2;
+      
+      // Draw rink outline (no rounded corners - straight edges at blue lines)
+      ctx.strokeStyle = '#1F2937';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.rect(rinkLeft, rinkTop, actualRinkWidth, actualRinkDepth);
+      ctx.fillStyle = '#F0F9FF';
+      ctx.fill();
+      ctx.stroke();
+      
+      // Blue lines at top and bottom
+      ctx.strokeStyle = '#2563EB';
+      ctx.lineWidth = Math.max(3, effectiveScale * 1);
+      
+      ctx.beginPath();
+      ctx.moveTo(rinkLeft, rinkTop);
+      ctx.lineTo(rinkRight, rinkTop);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.moveTo(rinkLeft, rinkBottom);
+      ctx.lineTo(rinkRight, rinkBottom);
+      ctx.stroke();
+      
+      // Center red line
+      ctx.strokeStyle = '#DC2626';
+      ctx.lineWidth = Math.max(3, effectiveScale * 1);
+      ctx.beginPath();
+      ctx.moveTo(rinkLeft, rinkCenterY);
+      ctx.lineTo(rinkRight, rinkCenterY);
+      ctx.stroke();
+      
+      // Center ice circle (15 ft radius)
+      const centerCircleRadius = NHL.centerCircleRadius * effectiveScale;
+      ctx.strokeStyle = '#2563EB';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(rinkCenterX, rinkCenterY, centerCircleRadius, 0, Math.PI * 2);
+      ctx.stroke();
+      
+      // Center dot
+      const dotRadius = Math.max(3, NHL.faceOffDotRadius * effectiveScale);
+      ctx.fillStyle = '#2563EB';
+      ctx.beginPath();
+      ctx.arc(rinkCenterX, rinkCenterY, dotRadius, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Neutral zone face-off dots (5 ft from blue lines, 22 ft from center)
+      const faceOffFromCenter = NHL.faceOffDotsFromCenter * effectiveScale;
+      const neutralDotFromBlue = NHL.neutralZoneDotFromBlue * effectiveScale;
+      
+      const faceOffX1 = rinkCenterX - faceOffFromCenter;
+      const faceOffX2 = rinkCenterX + faceOffFromCenter;
+      const topDotY = rinkTop + neutralDotFromBlue;
+      const bottomDotY = rinkBottom - neutralDotFromBlue;
+      
+      ctx.fillStyle = '#DC2626';
+      
+      // Top neutral zone dots
+      ctx.beginPath();
+      ctx.arc(faceOffX1, topDotY, dotRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(faceOffX2, topDotY, dotRadius, 0, Math.PI * 2);
+      ctx.fill();
+      
+      // Bottom neutral zone dots
+      ctx.beginPath();
+      ctx.arc(faceOffX1, bottomDotY, dotRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(faceOffX2, bottomDotY, dotRadius, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (view === 'quarter') {
+      // Quarter ice view - half width, offensive zone corner
+      // ~50 ft deep (from end boards to fully contain faceoff circle), ~42.5 ft wide (half rink width)
+      // Faceoff circle bottom is at: 11ft (goal line) + 20ft (dot from goal line) + 15ft (radius) = 46ft
+      const quarterRinkWidth = NHL.rinkWidth / 2;
+      const quarterRinkLength = 50;
+      const scale = rinkPixelWidth / quarterRinkWidth;
+      
+      const effectiveScale = Math.min(scale, rinkPixelHeight / quarterRinkLength);
+      const actualRinkWidth = quarterRinkWidth * effectiveScale;
+      const actualRinkDepth = quarterRinkLength * effectiveScale;
+      
+      const horizontalOffset = (rinkPixelWidth - actualRinkWidth) / 2;
+      const verticalOffset = (rinkPixelHeight - actualRinkDepth) / 2;
+      
+      const rinkLeft = padding + horizontalOffset;
+      const rinkRight = rinkLeft + actualRinkWidth;
+      const rinkTop = padding + verticalOffset;
+      const rinkBottom = rinkTop + actualRinkDepth;
+      
+      // Position of key lines from rinkTop
+      const goalLineY = rinkTop + NHL.goalLineFromEnd * effectiveScale;
+      
+      // Corner radius
+      const cornerRadius = 20 * effectiveScale;
+      
+      // Helper function to get X position at a given Y within the corner curve
+      const getCornerX = (y: number): number => {
+        const cornerCenterX = rinkLeft + cornerRadius;
+        const cornerCenterY = rinkTop + cornerRadius;
+        
+        if (y >= cornerCenterY) {
+          return rinkLeft;
+        }
+        
+        const dy = cornerCenterY - y;
+        if (dy > cornerRadius) {
+          return cornerCenterX;
+        }
+        const dx = Math.sqrt(cornerRadius * cornerRadius - dy * dy);
+        return cornerCenterX - dx;
+      };
+      
+      // Draw rink outline (only top-left corner rounded, right side is center line)
+      ctx.strokeStyle = '#1F2937';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(rinkLeft + cornerRadius, rinkTop);
+      ctx.lineTo(rinkRight, rinkTop);
+      ctx.lineTo(rinkRight, rinkBottom);
+      ctx.lineTo(rinkLeft, rinkBottom);
+      ctx.lineTo(rinkLeft, rinkTop + cornerRadius);
+      ctx.arcTo(rinkLeft, rinkTop, rinkLeft + cornerRadius, rinkTop, cornerRadius);
+      ctx.closePath();
+      ctx.fillStyle = '#F0F9FF';
+      ctx.fill();
+      ctx.stroke();
+      
+      // Center line on right side (dashed to indicate it's the center)
+      ctx.strokeStyle = '#DC2626';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(rinkRight, rinkTop);
+      ctx.lineTo(rinkRight, rinkBottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      
+      // Goal line - calculate proper X bounds accounting for corner curve
+      const goalLineLeftX = getCornerX(goalLineY);
+      
+      ctx.strokeStyle = '#DC2626';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(goalLineLeftX, goalLineY);
+      ctx.lineTo(rinkRight, goalLineY);
+      ctx.stroke();
+      
+      // Goal crease (6 ft radius semicircle) - positioned at center line (right edge)
+      const creaseRadius = NHL.creaseRadius * effectiveScale;
+      ctx.strokeStyle = '#DC2626';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      // Draw only the left half of the crease arc
+      ctx.arc(rinkRight, goalLineY, creaseRadius, Math.PI / 2, Math.PI);
+      ctx.stroke();
+      
+      // Goal (half visible at center line)
+      const goalWidth = NHL.goalWidth * effectiveScale;
+      const goalDepth = NHL.goalDepth * effectiveScale;
+      ctx.strokeStyle = '#DC2626';
+      ctx.lineWidth = 2;
+      ctx.fillStyle = '#FECACA';
+      ctx.beginPath();
+      ctx.rect(rinkRight - goalDepth, goalLineY - goalWidth / 2, goalDepth, goalWidth / 2);
+      ctx.fill();
+      ctx.stroke();
+      
+      // Face-off circle (only the left one, and only the visible portion)
+      const faceOffCircleRadius = NHL.faceOffCircleRadius * effectiveScale;
+      const faceOffFromGoalLine = NHL.faceOffDotsFromGoalLine * effectiveScale;
+      const faceOffFromCenter = NHL.faceOffDotsFromCenter * effectiveScale;
+      
+      const faceOffY = goalLineY + faceOffFromGoalLine;
+      const faceOffX = rinkRight - faceOffFromCenter; // Left circle, measured from center (right edge)
+      
+      ctx.strokeStyle = '#DC2626';
+      ctx.lineWidth = 2;
+      
+      // Draw full face-off circle if it fits, otherwise clip
+      ctx.beginPath();
+      ctx.arc(faceOffX, faceOffY, faceOffCircleRadius, 0, Math.PI * 2);
+      ctx.stroke();
+      
+      // Draw hash marks
+      const hashLineLength = 3 * effectiveScale;
+      const hashSpacing = 2 * effectiveScale;
+      
+      // Left and right sides of the circle
+      const leftX = faceOffX - faceOffCircleRadius;
+      const rightX = faceOffX + faceOffCircleRadius;
+      
+      // Left hash marks
+      ctx.beginPath();
+      ctx.moveTo(leftX, faceOffY - hashSpacing / 2);
+      ctx.lineTo(leftX - hashLineLength, faceOffY - hashSpacing / 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(leftX, faceOffY + hashSpacing / 2);
+      ctx.lineTo(leftX - hashLineLength, faceOffY + hashSpacing / 2);
+      ctx.stroke();
+      
+      // Right hash marks (if visible)
+      if (rightX < rinkRight) {
+        ctx.beginPath();
+        ctx.moveTo(rightX, faceOffY - hashSpacing / 2);
+        ctx.lineTo(rightX + hashLineLength, faceOffY - hashSpacing / 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(rightX, faceOffY + hashSpacing / 2);
+        ctx.lineTo(rightX + hashLineLength, faceOffY + hashSpacing / 2);
+        ctx.stroke();
+      }
+      
+      // Face-off dot
+      const dotRadius = Math.max(3, NHL.faceOffDotRadius * effectiveScale);
+      ctx.fillStyle = '#DC2626';
+      ctx.beginPath();
+      ctx.arc(faceOffX, faceOffY, dotRadius, 0, Math.PI * 2);
       ctx.fill();
     }
   }, []);
@@ -1022,12 +1326,14 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       } else if (obj.type === 'cone') {
         const hitRadius = 12;
         if (dx * dx + dy * dy <= hitRadius * hitRadius) return obj.id;
-      } else if (obj.type === 'net') {
-        const width = 30, height = 20;
-        if (Math.abs(dx) <= width / 2 && Math.abs(dy) <= height / 2) return obj.id;
-      } else if (obj.type === 'smallNet') {
-        const width = 18, height = 12;
-        if (Math.abs(dx) <= width / 2 && Math.abs(dy) <= height / 2) return obj.id;
+      } else if (obj.type === 'net' || obj.type === 'smallNet') {
+        const { width, height } = NET_DIMENSIONS[obj.type];
+        const rotation = obj.rotation || 0;
+        const cos = Math.cos(-rotation);
+        const sin = Math.sin(-rotation);
+        const localX = dx * cos - dy * sin;
+        const localY = dx * sin + dy * cos;
+        if (Math.abs(localX) <= width / 2 && Math.abs(localY) <= height / 2) return obj.id;
       } else if (obj.type === 'pucks') {
         const hitRadius = 14;
         if (dx * dx + dy * dy <= hitRadius * hitRadius) return obj.id;
@@ -1057,10 +1363,15 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           ctx.beginPath();
           ctx.arc(obj.x, obj.y, 16, 0, Math.PI * 2);
           ctx.stroke();
-        } else if (obj.type === 'net') {
-          ctx.strokeRect(obj.x - 18, obj.y - 13, 36, 26);
-        } else if (obj.type === 'smallNet') {
-          ctx.strokeRect(obj.x - 12, obj.y - 9, 24, 18);
+        } else if (obj.type === 'net' || obj.type === 'smallNet') {
+          const { width, height } = NET_DIMENSIONS[obj.type];
+          const rotation = obj.rotation || 0;
+          const padding = 6;
+          ctx.save();
+          ctx.translate(obj.x, obj.y);
+          ctx.rotate(rotation);
+          ctx.strokeRect(-width / 2 - padding / 2, -height / 2 - padding / 2, width + padding, height + padding);
+          ctx.restore();
         } else if (obj.type === 'pucks') {
           ctx.beginPath();
           ctx.arc(obj.x, obj.y, 18, 0, Math.PI * 2);
@@ -1194,13 +1505,17 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         
       } else if (obj.type === 'net') {
         // Draw full-size net
-        const width = 30;
-        const height = 20;
+        const { width, height } = NET_DIMENSIONS.net;
+        const rotation = obj.rotation || 0;
+        
+        ctx.save();
+        ctx.translate(obj.x, obj.y);
+        ctx.rotate(rotation);
         
         // Net frame
         ctx.strokeStyle = '#DC2626';
         ctx.lineWidth = 3;
-        ctx.strokeRect(obj.x - width / 2, obj.y - height / 2, width, height);
+        ctx.strokeRect(-width / 2, -height / 2, width, height);
         
         // Net mesh lines
         ctx.strokeStyle = '#9CA3AF';
@@ -1208,39 +1523,47 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         for (let i = 1; i < 4; i++) {
           const xOffset = (width / 4) * i;
           ctx.beginPath();
-          ctx.moveTo(obj.x - width / 2 + xOffset, obj.y - height / 2);
-          ctx.lineTo(obj.x - width / 2 + xOffset, obj.y + height / 2);
+          ctx.moveTo(-width / 2 + xOffset, -height / 2);
+          ctx.lineTo(-width / 2 + xOffset, height / 2);
           ctx.stroke();
         }
         for (let i = 1; i < 3; i++) {
           const yOffset = (height / 3) * i;
           ctx.beginPath();
-          ctx.moveTo(obj.x - width / 2, obj.y - height / 2 + yOffset);
-          ctx.lineTo(obj.x + width / 2, obj.y - height / 2 + yOffset);
+          ctx.moveTo(-width / 2, -height / 2 + yOffset);
+          ctx.lineTo(width / 2, -height / 2 + yOffset);
           ctx.stroke();
         }
         
+        ctx.restore();
+        
       } else if (obj.type === 'smallNet') {
         // Draw small net (mini goal)
-        const width = 18;
-        const height = 12;
+        const { width, height } = NET_DIMENSIONS.smallNet;
+        const rotation = obj.rotation || 0;
+        
+        ctx.save();
+        ctx.translate(obj.x, obj.y);
+        ctx.rotate(rotation);
         
         // Net frame
         ctx.strokeStyle = '#3B82F6';
         ctx.lineWidth = 2;
-        ctx.strokeRect(obj.x - width / 2, obj.y - height / 2, width, height);
+        ctx.strokeRect(-width / 2, -height / 2, width, height);
         
         // Net mesh
         ctx.strokeStyle = '#9CA3AF';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(obj.x, obj.y - height / 2);
-        ctx.lineTo(obj.x, obj.y + height / 2);
+        ctx.moveTo(0, -height / 2);
+        ctx.lineTo(0, height / 2);
         ctx.stroke();
         ctx.beginPath();
-        ctx.moveTo(obj.x - width / 2, obj.y);
-        ctx.lineTo(obj.x + width / 2, obj.y);
+        ctx.moveTo(-width / 2, 0);
+        ctx.lineTo(width / 2, 0);
         ctx.stroke();
+        
+        ctx.restore();
         
       } else if (obj.type === 'pucks') {
         // Draw pile of pucks with random positions
@@ -1264,6 +1587,30 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           ctx.lineWidth = 0.5;
           ctx.stroke();
         });
+      }
+      
+      // Rotation handle for selected nets
+      if (isSelected && (obj.type === 'net' || obj.type === 'smallNet')) {
+        const { height } = NET_DIMENSIONS[obj.type];
+        const rotation = obj.rotation || 0;
+        const offset = height / 2 + NET_ROTATION_HANDLE_OFFSET;
+        const cos = Math.cos(rotation);
+        const sin = Math.sin(rotation);
+        const handleX = obj.x + 0 * cos - (-offset) * sin;
+        const handleY = obj.y + 0 * sin + (-offset) * cos;
+        
+        ctx.strokeStyle = '#8B5CF6';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(obj.x, obj.y);
+        ctx.lineTo(handleX, handleY);
+        ctx.stroke();
+        
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(handleX, handleY, NET_ROTATION_HANDLE_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
       }
       
       ctx.restore();
@@ -1528,6 +1875,9 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           type: placeableType,
           x: point.x,
           y: point.y,
+          ...(placeableType === 'net' || placeableType === 'smallNet'
+            ? { rotation: 0 }
+            : {}),
           // Generate random puck offsets for pucks type
           ...(placeableType === 'pucks' && {
             puckOffsets: Array.from({ length: 8 + Math.floor(Math.random() * 5) }, () => ({
@@ -1604,6 +1954,28 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     
     // Handle select mode - start dragging if clicking on an object or stroke
     if (isSelectMode) {
+      if (selectedObjectId) {
+        const selectedObj = placedObjects.find(o => o.id === selectedObjectId);
+        if (selectedObj && (selectedObj.type === 'net' || selectedObj.type === 'smallNet')) {
+          const { height } = NET_DIMENSIONS[selectedObj.type];
+          const rotation = selectedObj.rotation || 0;
+          const offset = height / 2 + NET_ROTATION_HANDLE_OFFSET;
+          const cos = Math.cos(rotation);
+          const sin = Math.sin(rotation);
+          const handleX = selectedObj.x + 0 * cos - (-offset) * sin;
+          const handleY = selectedObj.y + 0 * sin + (-offset) * cos;
+          const dx = point.x - handleX;
+          const dy = point.y - handleY;
+          const hitRadius = NET_ROTATION_HANDLE_RADIUS + 3;
+          if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+            setIsRotatingObject(true);
+            setRotateStartAngle(Math.atan2(point.y - selectedObj.y, point.x - selectedObj.x));
+            setRotateStartRotation(selectedObj.rotation || 0);
+            return;
+          }
+        }
+      }
+      
       // First check objects (they're drawn on top)
       const hitObjectId = hitTestObject(point, placedObjects);
       if (hitObjectId) {
@@ -1642,6 +2014,16 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const point = getCanvasCoords(e);
     if (!point) return;
+    
+    // Handle rotating object in select mode
+    if (isSelectMode && isRotatingObject && selectedObjectId) {
+      setPlacedObjects(prev => prev.map(obj => {
+        if (obj.id !== selectedObjectId) return obj;
+        const rotation = rotateStartRotation + (Math.atan2(point.y - obj.y, point.x - obj.x) - rotateStartAngle);
+        return { ...obj, rotation };
+      }));
+      return;
+    }
     
     // Handle dragging object in select mode
     if (isSelectMode && isDraggingObject && selectedObjectId) {
@@ -1682,6 +2064,11 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
 
   const handleMouseUp = () => {
     // Handle end of drag in select mode
+    if (isSelectMode && isRotatingObject) {
+      setIsRotatingObject(false);
+      return;
+    }
+    
     if (isSelectMode && isDraggingObject) {
       setIsDraggingObject(false);
       return;
@@ -1822,9 +2209,13 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     onClose();
   };
 
-  const toggleRinkView = () => {
-    setRinkView(prev => prev === 'full' ? 'half' : 'full');
-  };
+  // Rink view options for toolbar
+  const rinkViewButtons: { view: RinkView; label: string; abbrev: string }[] = [
+    { view: 'full', label: 'Full Rink', abbrev: 'F' },
+    { view: 'half', label: 'Half Rink', abbrev: 'H' },
+    { view: 'neutral', label: 'Neutral Zone', abbrev: 'N' },
+    { view: 'quarter', label: 'Quarter Ice', abbrev: 'Q' },
+  ];
 
   const colorButtons: { color: LineColor; label: string }[] = [
     { color: 'blue', label: 'Blue' },
@@ -1852,18 +2243,31 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       <div className="flex gap-3">
         {/* Vertical Toolbar - Left Side (2 columns) */}
         <div className="flex flex-col gap-2 p-2 bg-gray-50 dark:bg-gray-800 rounded-lg shrink-0">
-          {/* Top Row: Rink View + Select */}
+          {/* Rink View Selection - 2x2 grid */}
           <div className="grid grid-cols-2 gap-1">
-            <Button
-              type="button"
-              size="sm"
-              variant={rinkView === 'half' ? 'primary' : 'outline'}
-              onClick={toggleRinkView}
-              title={rinkView === 'full' ? 'Switch to Half Rink' : 'Switch to Full Rink'}
-              className="w-8 h-8 p-0 flex items-center justify-center"
-            >
-              {rinkView === 'full' ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-            </Button>
+            {rinkViewButtons.map(({ view, label, abbrev }) => (
+              <button
+                key={view}
+                type="button"
+                title={label}
+                onClick={() => setRinkView(view)}
+                className={`
+                  w-8 h-8 flex items-center justify-center rounded-lg border-2 transition-all text-xs font-bold
+                  ${rinkView === view
+                    ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500 text-primary-700 dark:text-primary-300'
+                    : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400 text-gray-800 dark:text-gray-200'}
+                `}
+              >
+                {abbrev}
+              </button>
+            ))}
+          </div>
+
+          {/* Divider */}
+          <div className="h-px w-full bg-gray-300 dark:bg-gray-600" />
+
+          {/* Select Tool */}
+          <div className="grid grid-cols-2 gap-1">
             <button
               type="button"
               title="Select & Move"
@@ -2016,7 +2420,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                   setPlayerMarkerType(type);
                 }}
                 className={`
-                  w-6 h-6 rounded-full flex items-center justify-center text-white font-bold transition-all
+                  w-6 h-6 rounded-full flex items-center justify-center text-white font-bold transition-all border border-transparent
                   ${isPlaceMode && placeableType === 'player' && playerMarkerType === type
                     ? 'ring-2 ring-offset-1 ring-primary-500 dark:ring-offset-gray-800'
                     : ''}
@@ -2024,6 +2428,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                 style={{ 
                   backgroundColor: COLOR_MAP[lineColor === 'gray' ? 'black' : lineColor],
                   fontSize: label.length > 1 ? '8px' : '10px',
+                  borderColor: lineColor === 'black' ? 'rgba(229, 231, 235, 0.35)' : 'transparent',
                 }}
               >
                 {label}

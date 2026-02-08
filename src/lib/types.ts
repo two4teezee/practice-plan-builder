@@ -57,6 +57,58 @@ export interface DrillItem {
   customDuration?: string;
   customNotes?: string;
   selectedVariations?: string[]; // Selected variation names for this practice
+  overrides?: Partial<Drill>; // Practice-specific overrides (merged with drill at render time)
+}
+
+// Get the effective drill with overrides applied
+export function getEffectiveDrill(item: DrillItem): Drill {
+  if (!item.overrides) {
+    return item.drill;
+  }
+  return { ...item.drill, ...item.overrides };
+}
+
+// Check if a drill item has any overrides
+export function hasDrillOverrides(item: DrillItem): boolean {
+  return !!item.overrides && Object.keys(item.overrides).length > 0;
+}
+
+// Get list of overridden field names
+export function getOverriddenFields(item: DrillItem): (keyof Drill)[] {
+  if (!item.overrides) return [];
+  return Object.keys(item.overrides) as (keyof Drill)[];
+}
+
+// Clear a specific override field
+export function clearDrillOverride(item: DrillItem, field: keyof Drill): DrillItem {
+  if (!item.overrides) return item;
+  const newOverrides = { ...item.overrides };
+  delete newOverrides[field];
+  return {
+    ...item,
+    overrides: Object.keys(newOverrides).length > 0 ? newOverrides : undefined,
+  };
+}
+
+// Clear all overrides (reset to library version)
+export function clearAllDrillOverrides(item: DrillItem): DrillItem {
+  const { overrides, ...rest } = item;
+  return rest as DrillItem;
+}
+
+// Set a drill override
+export function setDrillOverride<K extends keyof Drill>(
+  item: DrillItem,
+  field: K,
+  value: Drill[K]
+): DrillItem {
+  return {
+    ...item,
+    overrides: {
+      ...item.overrides,
+      [field]: value,
+    },
+  };
 }
 
 // Parse variations string into array of variation names
@@ -117,7 +169,8 @@ export function parsePracticeDurationToSeconds(duration: PracticeDuration): numb
 
 // Get duration for a single drill item
 export function getDrillItemDuration(item: DrillItem): number {
-  return parseDurationToSeconds(item.customDuration || item.drill.duration);
+  const effectiveDrill = getEffectiveDrill(item);
+  return parseDurationToSeconds(item.customDuration || effectiveDrill.duration);
 }
 
 // Get duration for a timeline item (recursive for parallel blocks)

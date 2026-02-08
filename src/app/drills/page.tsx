@@ -20,6 +20,7 @@ export default function DrillsPage() {
   const { user } = useAuth();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDrill, setEditingDrill] = useState<Drill | null>(null);
+  const [newDrillKey, setNewDrillKey] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<Set<DrillCategory>>(
     new Set(DRILL_CATEGORIES)
@@ -179,7 +180,7 @@ export default function DrillsPage() {
     const matchesCategory = selectedCategories.has(drill.category);
     // If no tags selected, match all. Otherwise, drill must have at least one of the selected tags
     const matchesTags = selectedTags.size === 0 || 
-      (drill.tags && drill.tags.some(tag => selectedTags.has(tag)));
+      drill.tags?.some(tag => selectedTags.has(tag));
     return matchesSearch && matchesCategory && matchesTags;
   });
 
@@ -323,7 +324,13 @@ export default function DrillsPage() {
   };
 
   const handleNewDrill = () => {
+    try {
+      localStorage.removeItem('drill-form-new');
+    } catch (error) {
+      console.error('Failed to clear new drill form data:', error);
+    }
     setEditingDrill(null);
+    setNewDrillKey(prev => prev + 1);
     setIsModalOpen(true);
   };
 
@@ -564,6 +571,7 @@ export default function DrillsPage() {
               </div>
             )}
           </div>
+
         </div>
         <Button size="sm" onClick={handleNewDrill}>
           <Plus className="w-4 h-4" />
@@ -618,6 +626,7 @@ export default function DrillsPage() {
         size="drill"
       >
         <DrillForm
+          key={editingDrill ? `drill-${editingDrill.id ?? 'temp'}` : `new-${newDrillKey}`}
           drill={editingDrill}
           onSave={handleSave}
           onCreateNew={editingDrill ? handleSaveAsNew : undefined}

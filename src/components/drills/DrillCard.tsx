@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import type { Drill } from '@/lib/types';
 import { getTagColor } from '@/lib/types';
 import { Card } from '@/components/ui/Card';
@@ -14,7 +15,23 @@ interface DrillCardProps {
   maxTags?: number;
 }
 
-export function DrillCard({ drill, onClick, onAdd, showAddButton = false, maxTags = 4 }: DrillCardProps) {
+function getSketchImagePreview(sketchData?: string): string | null {
+  if (!sketchData) return null;
+  try {
+    const data = JSON.parse(sketchData);
+    return data.imagePreview || null;
+  } catch {
+    return null;
+  }
+}
+
+export function DrillCard({
+  drill,
+  onClick,
+  onAdd,
+  showAddButton = false,
+  maxTags = 4,
+}: DrillCardProps) {
   const categoryColors: Record<string, string> = {
     Admin: 'bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-400',
     Conditioning: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400',
@@ -45,9 +62,12 @@ export function DrillCard({ drill, onClick, onAdd, showAddButton = false, maxTag
     e.stopPropagation();
   };
 
+  const sketchImage = getSketchImagePreview(drill.sketchData);
+  const hasSketchThumbnail = !!sketchImage;
+
   return (
     <Card 
-      className={`p-4 h-[140px] flex flex-col ${onClick ? 'cursor-pointer' : ''}`} 
+      className={`p-4 h-[155px] flex flex-col ${onClick ? 'cursor-pointer' : ''}`} 
       hover={!!onClick}
       onClick={handleCardClick}
     >
@@ -58,20 +78,31 @@ export function DrillCard({ drill, onClick, onAdd, showAddButton = false, maxTag
             <h3 className="font-semibold text-gray-900 dark:text-white truncate">
               {drill.name}
             </h3>
-            <p className="text-sm text-gray-500 dark:text-gray-400 line-clamp-2 mt-1">
-              {drill.description || drill.objective || drill.coachingPoints ||'No description'}
+            <p className={`text-sm text-gray-500 dark:text-gray-400 ${hasSketchThumbnail ? 'line-clamp-3' : 'line-clamp-2'} mt-1`}>
+              {drill.description || drill.objective || drill.coachingPoints || drill.setup || 'No description'}
             </p>
           </div>
-          <span className={`px-2.5 py-1 text-xs font-medium rounded-lg whitespace-nowrap ${categoryColors[drill.category]}`}>
-            {drill.category}
-          </span>
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <span className={`px-2.5 py-1 text-xs font-medium rounded-lg whitespace-nowrap ${categoryColors[drill.category]}`}>
+              {drill.category}
+            </span>
+            {hasSketchThumbnail && (
+              <div className="w-24 h-16 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-hidden">
+                <Image
+                  src={sketchImage || ''}
+                  alt={`Sketch for ${drill.name}`}
+                  width={96}
+                  height={64}
+                  className="w-full h-full object-contain"
+                  unoptimized
+                />
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Spacer to push content to bottom */}
-        <div className="flex-1" />
-
         {/* Bottom row with tags/links and optional add button */}
-        <div className="flex items-end justify-between mt-2">
+        <div className="flex items-end justify-between mt-1">
           <div className="flex flex-col gap-1 flex-1 min-w-0">
             {/* Tags */}
             {drill.tags && drill.tags.length > 0 && (

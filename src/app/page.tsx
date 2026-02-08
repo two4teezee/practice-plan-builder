@@ -332,6 +332,16 @@ export default function CreatePracticePlanPage() {
     }));
   };
 
+  // Update drill overrides for practice-specific modifications
+  const handleUpdateOverrides = (id: string, overrides: Partial<Drill> | undefined) => {
+    setTimeline(prev => updateTimelineItem(prev, id, item => {
+      if (item.type === 'drill') {
+        return { ...item, overrides };
+      }
+      return item;
+    }));
+  };
+
   // Add a parallel split to the main timeline
   const handleAddParallelSplit = () => {
     const newSplit = createParallelSplit(2);
@@ -814,6 +824,7 @@ export default function CreatePracticePlanPage() {
                 onRemoveGroup={handleRemoveGroup}
                 onRemoveParallelSplit={handleRemoveParallelSplit}
                 onUpdateGroupName={handleUpdateGroupName}
+                onUpdateOverrides={handleUpdateOverrides}
               />
             </div>
           </Card>
