@@ -58,6 +58,12 @@ function getSketchImagePreview(sketchData?: string): string | null {
   return info?.imagePreview || null;
 }
 
+const getLocationLabel = (location: PracticePlan['location']) => {
+  if (!location) return '';
+  if (typeof location === 'string') return location;
+  return location.name || location.formattedAddress || '';
+};
+
 // Helper to convert base64 data URL to binary for Word export
 function base64ToUint8Array(base64: string): Uint8Array {
   const base64Data = base64.split(',')[1];
@@ -278,7 +284,7 @@ export async function exportPracticePlanToPDF(plan: PracticePlan) {
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   const practiceDate = normalizedPlan.date instanceof Date ? normalizedPlan.date : new Date(normalizedPlan.date);
-  const infoLine = `${format(practiceDate, 'MMM d, yyyy')} | ${normalizedPlan.duration} | ${normalizedPlan.location}`;
+  const infoLine = `${format(practiceDate, 'MMM d, yyyy')} | ${normalizedPlan.duration} | ${getLocationLabel(normalizedPlan.location)}`;
   doc.text(infoLine, pageWidth / 2, y, { align: 'center' });
   y += 5;
 
@@ -644,6 +650,7 @@ export async function exportPracticePlanToWord(plan: PracticePlan) {
   }
 
   // Build compact document
+  const locationLabel = getLocationLabel(normalizedPlan.location);
   const headerChildren: Paragraph[] = [
     // Title
     new Paragraph({
@@ -657,7 +664,7 @@ export async function exportPracticePlanToWord(plan: PracticePlan) {
         new TextRun({ text: ' | ', size: 20, color: '999999' }),
         new TextRun({ text: normalizedPlan.duration, size: 20 }),
         new TextRun({ text: ' | ', size: 20, color: '999999' }),
-        new TextRun({ text: normalizedPlan.location, size: 20 }),
+        new TextRun({ text: locationLabel, size: 20 }),
       ],
       spacing: { after: 50 },
     }),
@@ -874,7 +881,7 @@ export async function printPracticePlan(plan: PracticePlan) {
     </head>
     <body>
       <h1>${normalizedPlan.name}</h1>
-      <div class="info-line">${format(practiceDate, 'MMM d, yyyy')} | ${normalizedPlan.duration} | ${normalizedPlan.location}</div>
+      <div class="info-line">${format(practiceDate, 'MMM d, yyyy')} | ${normalizedPlan.duration} | ${getLocationLabel(normalizedPlan.location)}</div>
       ${normalizedPlan.equipment ? `<div class="equipment"><strong>Equipment:</strong> ${normalizedPlan.equipment}</div>` : ''}
       <h2>Drills (${allDrills.length})</h2>
       ${timelineHtml}
