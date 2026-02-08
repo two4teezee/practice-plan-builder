@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
+import Image from 'next/image';
 import { format } from 'date-fns';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { 
@@ -16,6 +17,7 @@ import type {
   PracticePlanDrill, 
   Drill,
   PracticeDuration,
+  Location,
 } from '@/lib/types';
 import type { TimelineItem } from '@/lib/types';
 import {
@@ -39,6 +41,7 @@ import { Modal } from '@/components/ui/Modal';
 import { DrillsList } from '@/components/practice/DrillsList';
 import { DrillPicker } from '@/components/practice/DrillPicker';
 import { PracticeTimeline } from '@/components/practice/PracticeTimeline';
+import { LocationPicker } from '@/components/ui/LocationPicker';
 import { 
   ClipboardList, 
   Save, 
@@ -61,7 +64,7 @@ interface DraftData {
     description: string;
     date: string;
     duration: PracticeDuration;
-    location: string;
+    location: Location | null;
     notes: string;
   };
   drills: PracticePlanDrill[];
@@ -73,7 +76,7 @@ const getDefaultFormData = () => ({
   description: '',
   date: format(new Date(), 'yyyy-MM-dd'),
   duration: '50 minutes' as PracticeDuration,
-  location: 'Hylo Park Arena',
+  location: null as Location | null,
   notes: '',
 });
 
@@ -95,6 +98,9 @@ export default function CreatePracticePlanPage() {
   
   // For drill picker context - which group to add drills to (null = main timeline)
   const [activeGroupPath, setActiveGroupPath] = useState<string[] | null>(null);
+
+  // Drill preview modal state
+  const [previewDrill, setPreviewDrill] = useState<Drill | null>(null);
 
   // Saved practice plans state
   const [savedPlans, setSavedPlans] = useState<PracticePlan[]>([]);
@@ -571,10 +577,6 @@ export default function CreatePracticePlanPage() {
 
   const durationOptions = PRACTICE_DURATIONS.map((d) => ({ value: d, label: d }));
 
-  // Get all drill IDs already in the timeline (including those in parallel groups)
-  const addedDrillIds = useMemo(() => {
-    return flattenTimelineDrills(timeline).map(d => d.drillId);
-  }, [timeline]);
 
   /*
    * LAYOUT VALUES - Edit src/lib/layoutConfig.ts to adjust these
@@ -683,20 +685,12 @@ export default function CreatePracticePlanPage() {
               </div>
 
               <div>
-                <label 
-                  htmlFor="location" 
-                  className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
-                  style={S.detailsLabel}
-                >
-                  Location
-                </label>
-                <input
-                  id="location"
-                  type="text"
+                <LocationPicker
+                  label="Location"
                   value={formData.location}
-                  onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                  placeholder="Enter location"
-                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  onChange={(location) => setFormData({ ...formData, location })}
+                  placeholder="Search for a location..."
+                  compact
                   style={S.detailsInput}
                 />
               </div>
@@ -843,7 +837,127 @@ export default function CreatePracticePlanPage() {
         title="Add Drill to Practice"
         size="fixed"
       >
-        <DrillPicker onAdd={handleAddDrill} addedDrillIds={addedDrillIds} />
+        <DrillPicker onAdd={handleAddDrill} onPreview={setPreviewDrill} />
+      </Modal>
+
+      {/* Drill Preview Modal */}
+      <Modal
+        isOpen={!!previewDrill}
+        onClose={() => setPreviewDrill(null)}
+        title={previewDrill?.name || 'Drill Preview'}
+        size="lg"
+      >
+        {previewDrill && (
+          <div className="space-y-4">
+            {/* Header with category and duration */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="px-2.5 py-1 text-sm font-medium rounded-lg bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300">
+                {previewDrill.category}
+              </span>
+              <span className="flex items-center gap-1 text-sm text-gray-600 dark:text-gray-400">
+                <Clock className="w-4 h-4" />
+                {previewDrill.duration}
+              </span>
+            </div>
+
+            {/* Description */}
+            {previewDrill.description && (
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</h4>
+                <p className="text-sm text-gray-600 dark:text-gray-400">{previewDrill.description}</p>
+              </div>
+            )}
+
+            {/* Objective */}
+            {previewDrill.objective && (
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Objective</h4>
+                <p className="text-sm text-gray-600 dark:text-gray-400">{previewDrill.objective}</p>
+              </div>
+            )}
+
+            {/* Setup */}
+            {previewDrill.setup && (
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Setup</h4>
+                <p className="text-sm text-gray-600 dark:text-gray-400">{previewDrill.setup}</p>
+              </div>
+            )}
+
+            {/* Execution */}
+            {previewDrill.execution && (
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Execution</h4>
+                <p className="text-sm text-gray-600 dark:text-gray-400">{previewDrill.execution}</p>
+              </div>
+            )}
+
+            {/* Coaching Points */}
+            {previewDrill.coachingPoints && (
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Coaching Points</h4>
+                <p className="text-sm text-gray-600 dark:text-gray-400">{previewDrill.coachingPoints}</p>
+              </div>
+            )}
+
+            {/* Sketch */}
+            {previewDrill.sketchData && (() => {
+              try {
+                const parsed = JSON.parse(previewDrill.sketchData);
+                if (parsed.imagePreview) {
+                  return (
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Sketch</h4>
+                      <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden bg-white dark:bg-gray-900">
+                        <Image 
+                          src={parsed.imagePreview} 
+                          alt={`Sketch for ${previewDrill.name}`}
+                          width={600}
+                          height={256}
+                          className="w-full max-h-64 object-contain"
+                          unoptimized
+                        />
+                      </div>
+                    </div>
+                  );
+                }
+              } catch {
+                return null;
+              }
+              return null;
+            })()}
+
+            {/* Tags */}
+            {previewDrill.tags && previewDrill.tags.length > 0 && (
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Tags</h4>
+                <div className="flex flex-wrap gap-1.5">
+                  {previewDrill.tags.map(tag => (
+                    <span
+                      key={tag}
+                      className="px-2 py-0.5 text-xs font-medium rounded bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Action button */}
+            <div className="pt-2 flex justify-end">
+              <Button
+                onClick={() => {
+                  handleAddDrill(previewDrill);
+                  setPreviewDrill(null);
+                }}
+              >
+                <Plus className="w-4 h-4" />
+                Add to Practice
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* Load Practice Plan Modal */}

@@ -12,6 +12,7 @@ interface DrillCardProps {
   onClick?: (drill: Drill) => void;
   onAdd?: (drill: Drill) => void;
   showAddButton?: boolean;
+  cardLayout?: 'rect' | 'square';
   maxTags?: number;
 }
 
@@ -30,6 +31,7 @@ export function DrillCard({
   onClick,
   onAdd,
   showAddButton = false,
+  cardLayout = 'rect',
   maxTags = 4,
 }: DrillCardProps) {
   const categoryColors: Record<string, string> = {
@@ -64,6 +66,92 @@ export function DrillCard({
 
   const sketchImage = getSketchImagePreview(drill.sketchData);
   const hasSketchThumbnail = !!sketchImage;
+
+  const tagsBlock = drill.tags && drill.tags.length > 0 && (
+    <div className="flex flex-wrap gap-1 items-center">
+      {drill.tags.slice(0, maxTags).map(tag => (
+        <span
+          key={tag}
+          className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${getTagColor(tag)}`}
+        >
+          {tag}
+        </span>
+      ))}
+      {drill.tags.length > maxTags && (
+        <span className="text-[10px] text-gray-400 dark:text-gray-500">
+          +{drill.tags.length - maxTags} more
+        </span>
+      )}
+    </div>
+  );
+
+  const linksBlock = (drill.videoLink || drill.pdfLink) && (
+    <div className="flex gap-2">
+      {drill.videoLink && (
+        <a
+          href={drill.videoLink}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={handleLinkClick}
+          className="inline-flex items-center gap-1 text-xs text-primary-600 dark:text-primary-400 hover:underline"
+        >
+          <ExternalLink className="w-3 h-3" />
+          Video
+        </a>
+      )}
+      {drill.pdfLink && (
+        <a
+          href={drill.pdfLink}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={handleLinkClick}
+          className="inline-flex items-center gap-1 text-xs text-primary-600 dark:text-primary-400 hover:underline"
+        >
+          <ExternalLink className="w-3 h-3" />
+          PDF
+        </a>
+      )}
+    </div>
+  );
+
+  if (cardLayout === 'square') {
+    return (
+      <Card
+        className={`p-4 h-[260px] flex flex-col ${onClick ? 'cursor-pointer' : ''}`}
+        hover={!!onClick}
+        onClick={handleCardClick}
+      >
+        <div className="flex flex-col h-full gap-3">
+          <div className="flex items-start justify-between gap-3">
+            <h3 className="font-semibold text-gray-900 dark:text-white truncate">
+              {drill.name}
+            </h3>
+            <span className={`px-2.5 py-1 text-xs font-medium rounded-lg whitespace-nowrap ${categoryColors[drill.category]}`}>
+              {drill.category}
+            </span>
+          </div>
+
+          {hasSketchThumbnail && (
+            <div className="w-full h-[140px] rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-hidden">
+              <Image
+                src={sketchImage || ''}
+                alt={`Sketch for ${drill.name}`}
+                width={320}
+                height={200}
+                className="w-full h-full object-contain"
+                unoptimized
+              />
+            </div>
+          )}
+
+          <div className="flex flex-col gap-2">
+            {tagsBlock}
+            {linksBlock}
+          </div>
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card 
@@ -105,53 +193,10 @@ export function DrillCard({
         <div className="flex items-end justify-between mt-1">
           <div className="flex flex-col gap-1 flex-1 min-w-0">
             {/* Tags */}
-            {drill.tags && drill.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1 items-center">
-                {drill.tags.slice(0, maxTags).map(tag => (
-                  <span
-                    key={tag}
-                    className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${getTagColor(tag)}`}
-                  >
-                    {tag}
-                  </span>
-                ))}
-                {drill.tags.length > maxTags && (
-                  <span className="text-[10px] text-gray-400 dark:text-gray-500">
-                    +{drill.tags.length - maxTags} more
-                  </span>
-                )}
-              </div>
-            )}
+            {tagsBlock}
 
             {/* Links */}
-            {(drill.videoLink || drill.pdfLink) && (
-              <div className="flex gap-2">
-                {drill.videoLink && (
-                  <a
-                    href={drill.videoLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={handleLinkClick}
-                    className="inline-flex items-center gap-1 text-xs text-primary-600 dark:text-primary-400 hover:underline"
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                    Video
-                  </a>
-                )}
-                {drill.pdfLink && (
-                  <a
-                    href={drill.pdfLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={handleLinkClick}
-                    className="inline-flex items-center gap-1 text-xs text-primary-600 dark:text-primary-400 hover:underline"
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                    PDF
-                  </a>
-                )}
-              </div>
-            )}
+            {linksBlock}
           </div>
 
           {/* Add button for picker mode */}

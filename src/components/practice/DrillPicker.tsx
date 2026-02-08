@@ -7,16 +7,24 @@ import type { Drill, DrillCategory } from '@/lib/types';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { Search, Plus, Clock, Filter, X, Check, ChevronDown } from 'lucide-react';
+import { Search, Plus, Clock, Filter, X, Check, ChevronDown, Eye, ArrowUpDown } from 'lucide-react';
 
 const PICKER_FILTER_KEY = 'drill-picker-filter';
+const PICKER_SORT_KEY = 'drill-picker-sort';
+const SORT_OPTIONS = [
+  { value: 'name-asc', label: 'Name (A–Z)' },
+  { value: 'name-desc', label: 'Name (Z–A)' },
+  { value: 'category-asc', label: 'Category (A–Z)' },
+  { value: 'updated-desc', label: 'Recently Updated' },
+  { value: 'created-desc', label: 'Recently Created' },
+] as const;
 
 interface DrillPickerProps {
   onAdd: (drill: Drill) => void;
-  addedDrillIds: string[];
+  onPreview?: (drill: Drill) => void;
 }
 
-export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
+export function DrillPicker({ onAdd, onPreview }: DrillPickerProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<Set<DrillCategory>>(
     new Set(DRILL_CATEGORIES)
@@ -28,9 +36,13 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const filterPopoverRef = useRef<HTMLDivElement>(null);
+  const [isSortOpen, setIsSortOpen] = useState(false);
+  const sortButtonRef = useRef<HTMLButtonElement>(null);
+  const sortPopoverRef = useRef<HTMLDivElement>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [drills, setDrills] = useState<Drill[]>([]);
   const [isLoadingDrills, setIsLoadingDrills] = useState(true);
+  const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'category-asc' | 'updated-desc' | 'created-desc'>('name-asc');
 
   // Filter tags by category based on search
   const filteredTagCategories = useMemo(() => {
@@ -98,7 +110,25 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isFilterOpen]);
 
-  // Load saved filters from localStorage
+  // Close sort popover when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        isSortOpen &&
+        sortPopoverRef.current &&
+        sortButtonRef.current &&
+        !sortPopoverRef.current.contains(event.target as Node) &&
+        !sortButtonRef.current.contains(event.target as Node)
+      ) {
+        setIsSortOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isSortOpen]);
+
+  // Load saved filters + sort from localStorage
   useEffect(() => {
     try {
       const saved = localStorage.getItem(PICKER_FILTER_KEY);
@@ -111,13 +141,17 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
           setSelectedTags(new Set(parsed.tags));
         }
       }
+      const savedSort = localStorage.getItem(PICKER_SORT_KEY);
+      if (savedSort && SORT_OPTIONS.some(option => option.value === savedSort)) {
+        setSortBy(savedSort as typeof sortBy);
+      }
     } catch (error) {
       console.error('Failed to load filters:', error);
     }
     setIsLoaded(true);
   }, []);
 
-  // Save filters to localStorage
+  // Save filters + sort to localStorage
   useEffect(() => {
     if (!isLoaded) return;
     try {
@@ -128,10 +162,11 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
           tags: Array.from(selectedTags),
         })
       );
+      localStorage.setItem(PICKER_SORT_KEY, sortBy);
     } catch (error) {
       console.error('Failed to save filters:', error);
     }
-  }, [selectedCategories, selectedTags, isLoaded]);
+  }, [selectedCategories, selectedTags, sortBy, isLoaded]);
 
   const isAllCategoriesSelected = selectedCategories.size === DRILL_CATEGORIES.length;
   const hasTagsFilter = selectedTags.size > 0;
@@ -167,9 +202,45 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
     const matchesCategory = selectedCategories.has(drill.category);
     // If no tags selected, match all. Otherwise, drill must have at least one of the selected tags
     const matchesTags = selectedTags.size === 0 || 
-      (drill.tags && drill.tags.some(tag => selectedTags.has(tag)));
+      drill.tags?.some(tag => selectedTags.has(tag));
     return matchesSearch && matchesCategory && matchesTags;
   });
+
+  const sortedDrills = useMemo(() => {
+    if (!filteredDrills) return [];
+    const drillsToSort = [...filteredDrills];
+    const getName = (drill: Drill) => drill.name?.toLowerCase() ?? '';
+    const getCategory = (drill: Drill) => drill.category?.toLowerCase() ?? '';
+    const getTime = (value?: Date | string | null) => (value ? new Date(value).getTime() : 0);
+
+    drillsToSort.sort((a, b) => {
+      switch (sortBy) {
+        case 'name-asc':
+          return getName(a).localeCompare(getName(b));
+        case 'name-desc':
+          return getName(b).localeCompare(getName(a));
+        case 'category-asc': {
+          const categoryCompare = getCategory(a).localeCompare(getCategory(b));
+          if (categoryCompare !== 0) return categoryCompare;
+          return getName(a).localeCompare(getName(b));
+        }
+        case 'updated-desc': {
+          const updatedDiff = getTime(b.updatedAt) - getTime(a.updatedAt);
+          if (updatedDiff !== 0) return updatedDiff;
+          return getName(a).localeCompare(getName(b));
+        }
+        case 'created-desc': {
+          const createdDiff = getTime(b.createdAt) - getTime(a.createdAt);
+          if (createdDiff !== 0) return createdDiff;
+          return getName(a).localeCompare(getName(b));
+        }
+        default:
+          return getName(a).localeCompare(getName(b));
+      }
+    });
+
+    return drillsToSort;
+  }, [filteredDrills, sortBy]);
 
   const categoryColors: Record<string, string> = {
     Admin: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-300 dark:border-slate-600',
@@ -395,6 +466,52 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
             </div>
           )}
         </div>
+
+        {/* Sort Button */}
+        <div className="relative">
+          <button
+            ref={sortButtonRef}
+            type="button"
+            onClick={() => setIsSortOpen(!isSortOpen)}
+            className={`
+              flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-all h-full
+              ${isSortOpen
+                ? 'bg-primary-50 dark:bg-primary-900/20 border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300'
+                : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+              }
+            `}
+          >
+            <ArrowUpDown className="w-4 h-4" />
+          </button>
+
+          {isSortOpen && (
+            <div
+              ref={sortPopoverRef}
+              className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50"
+            >
+              <div className="py-1">
+                {SORT_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => {
+                      setSortBy(option.value);
+                      setIsSortOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-left ${
+                      sortBy === option.value
+                        ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+                        : 'text-gray-700 dark:text-gray-300'
+                    }`}
+                  >
+                    <span>{option.label}</span>
+                    {sortBy === option.value && <Check className="w-4 h-4" />}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Drills List */}
@@ -404,9 +521,7 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600 mx-auto mb-2"></div>
             <p className="text-sm text-gray-500 dark:text-gray-400">Loading drills...</p>
           </div>
-        ) : filteredDrills?.map((drill) => {
-          const isAdded = drill.id !== undefined && addedDrillIds.includes(drill.id);
-          return (
+        ) : sortedDrills.map((drill) => (
             <Card key={drill.id} className="p-3">
               <div className="flex items-center gap-3">
                 <div className="flex-1 min-w-0">
@@ -425,20 +540,30 @@ export function DrillPicker({ onAdd, addedDrillIds }: DrillPickerProps) {
                     </div>
                   </div>
                 </div>
-                <Button
-                  size="sm"
-                  variant={isAdded ? 'secondary' : 'primary'}
-                  onClick={() => onAdd(drill)}
-                  disabled={isAdded}
-                >
-                  <Plus className="w-4 h-4" />
-                  {isAdded ? 'Added' : 'Add'}
-                </Button>
+                <div className="flex items-center gap-1">
+                  {onPreview && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => onPreview(drill)}
+                      title="Preview drill"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => onAdd(drill)}
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add
+                  </Button>
+                </div>
               </div>
             </Card>
-          );
-        })}
-        {!isLoadingDrills && filteredDrills?.length === 0 && (
+          ))}
+        {!isLoadingDrills && sortedDrills.length === 0 && (
           <div className="text-center py-8 text-gray-500 dark:text-gray-400">
             No drills found
           </div>

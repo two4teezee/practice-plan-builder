@@ -1,13 +1,14 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { format } from 'date-fns';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { getPracticePlans, deletePracticePlan, refreshPlanDrillData } from '@/lib/db';
 import type { PracticePlan, TimelineItem, DrillItem, ParallelSplitItem } from '@/lib/types';
-import { flattenTimelineDrills, getTimelineItemDuration, secondsToDurationString } from '@/lib/types';
+import { flattenTimelineDrills, getTimelineItemDuration, secondsToDurationString, PRACTICE_DURATIONS, DRILL_TAG_CATEGORIES, DRILL_TAG_CATEGORY_NAMES, getTagColor } from '@/lib/types';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { 
   exportPracticePlanToPDF, 
@@ -27,9 +28,47 @@ import {
   ChevronDown,
   ChevronUp,
   GitBranch,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Search,
+  Filter,
+  ArrowUpDown,
+  Check,
+  X
 } from 'lucide-react';
 import { LAYOUT_STYLES } from '@/lib/layoutConfig';
+
+const FILTER_STORAGE_KEY = 'practice-plans-filter';
+const SORT_STORAGE_KEY = 'practice-plans-sort';
+const SORT_OPTIONS = [
+  { value: 'name-asc', label: 'Name (A–Z)' },
+  { value: 'name-desc', label: 'Name (Z–A)' },
+  { value: 'date-desc', label: 'Date (Newest)' },
+  { value: 'date-asc', label: 'Date (Oldest)' },
+  { value: 'updated-desc', label: 'Recently Updated' },
+  { value: 'drills-desc', label: 'Most Drills' },
+  { value: 'drills-asc', label: 'Least Drills' },
+] as const;
+const DATE_RANGE_OPTIONS = [
+  { value: 'all', label: 'All Dates' },
+  { value: 'last-30', label: 'Last 30 Days' },
+  { value: 'last-90', label: 'Last 90 Days' },
+  { value: 'season', label: 'This Season' },
+] as const;
+const GROUP_FILTER_OPTIONS = [
+  { value: 'all', label: 'All Plans' },
+  { value: 'with-groups', label: 'With Groups' },
+  { value: 'no-groups', label: 'Without Groups' },
+] as const;
+
+const getPlanDate = (plan: PracticePlan) => {
+  return plan.date instanceof Date ? plan.date : new Date(plan.date);
+};
+
+const getLocationLabel = (location: PracticePlan['location']) => {
+  if (!location) return '';
+  if (typeof location === 'string') return location;
+  return location.name || location.formattedAddress || '';
+};
 
 // Helper to extract image preview from sketch data
 function getSketchImagePreview(sketchData?: string): string | null {
@@ -345,6 +384,23 @@ export default function HistoryPage() {
   const [expandedPlanId, setExpandedPlanId] = useState<string | null>(null);
   const [practicePlans, setPracticePlans] = useState<PracticePlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dateRange, setDateRange] = useState<typeof DATE_RANGE_OPTIONS[number]['value']>('all');
+  const [selectedDurations, setSelectedDurations] = useState<Set<string>>(new Set());
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
+  const [tagSearchQuery, setTagSearchQuery] = useState('');
+  const [isTagDropdownOpen, setIsTagDropdownOpen] = useState(false);
+  const tagDropdownRef = useRef<HTMLDivElement>(null);
+  const [locationQuery, setLocationQuery] = useState('');
+  const [groupFilter, setGroupFilter] = useState<typeof GROUP_FILTER_OPTIONS[number]['value']>('all');
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const filterButtonRef = useRef<HTMLButtonElement>(null);
+  const filterPopoverRef = useRef<HTMLDivElement>(null);
+  const [isSortOpen, setIsSortOpen] = useState(false);
+  const sortButtonRef = useRef<HTMLButtonElement>(null);
+  const sortPopoverRef = useRef<HTMLDivElement>(null);
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [sortBy, setSortBy] = useState<typeof SORT_OPTIONS[number]['value']>('date-desc');
 
   // Fetch practice plans
   const fetchPlans = useCallback(async () => {
@@ -367,6 +423,111 @@ export default function HistoryPage() {
   useEffect(() => {
     fetchPlans();
   }, [fetchPlans]);
+
+  // Close filter popover when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        isFilterOpen &&
+        filterPopoverRef.current &&
+        filterButtonRef.current &&
+        !filterPopoverRef.current.contains(event.target as Node) &&
+        !filterButtonRef.current.contains(event.target as Node)
+      ) {
+        setIsFilterOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isFilterOpen]);
+
+  // Close sort popover when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        isSortOpen &&
+        sortPopoverRef.current &&
+        sortButtonRef.current &&
+        !sortPopoverRef.current.contains(event.target as Node) &&
+        !sortButtonRef.current.contains(event.target as Node)
+      ) {
+        setIsSortOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isSortOpen]);
+
+  // Close tag dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (tagDropdownRef.current && !tagDropdownRef.current.contains(event.target as Node)) {
+        setIsTagDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Load saved filters + sort from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(FILTER_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as {
+          dateRange?: typeof dateRange;
+          durations?: string[];
+          tags?: string[];
+          locationQuery?: string;
+          groupFilter?: typeof groupFilter;
+        };
+        if (parsed.dateRange && DATE_RANGE_OPTIONS.some(opt => opt.value === parsed.dateRange)) {
+          setDateRange(parsed.dateRange);
+        }
+        if (parsed.durations && parsed.durations.length > 0) {
+          setSelectedDurations(new Set(parsed.durations));
+        }
+        if (parsed.tags) {
+          setSelectedTags(new Set(parsed.tags));
+        }
+        if (typeof parsed.locationQuery === 'string') {
+          setLocationQuery(parsed.locationQuery);
+        }
+        if (parsed.groupFilter && GROUP_FILTER_OPTIONS.some(opt => opt.value === parsed.groupFilter)) {
+          setGroupFilter(parsed.groupFilter);
+        }
+      }
+      const savedSort = localStorage.getItem(SORT_STORAGE_KEY);
+      if (savedSort && SORT_OPTIONS.some(option => option.value === savedSort)) {
+        setSortBy(savedSort as typeof sortBy);
+      }
+    } catch (error) {
+      console.error('Failed to load filters:', error);
+    }
+    setIsLoaded(true);
+  }, []);
+
+  // Save filters + sort to localStorage
+  useEffect(() => {
+    if (!isLoaded) return;
+    try {
+      localStorage.setItem(
+        FILTER_STORAGE_KEY,
+        JSON.stringify({
+          dateRange,
+          durations: Array.from(selectedDurations),
+          tags: Array.from(selectedTags),
+          locationQuery,
+          groupFilter,
+        })
+      );
+      localStorage.setItem(SORT_STORAGE_KEY, sortBy);
+    } catch (error) {
+      console.error('Failed to save filters:', error);
+    }
+  }, [dateRange, selectedDurations, selectedTags, locationQuery, groupFilter, sortBy, isLoaded]);
 
   const handleDelete = async (plan: PracticePlan) => {
     if (plan.id && confirm(`Are you sure you want to delete "${plan.name}"?`)) {
@@ -397,6 +558,174 @@ export default function HistoryPage() {
     setExpandedPlanId(expandedPlanId === planId ? null : planId);
   };
 
+  const clearAllFilters = () => {
+    setDateRange('all');
+    setSelectedDurations(new Set());
+    setSelectedTags(new Set());
+    setLocationQuery('');
+    setGroupFilter('all');
+  };
+
+  const toggleDuration = (duration: string) => {
+    const next = new Set(selectedDurations);
+    if (next.has(duration)) {
+      next.delete(duration);
+    } else {
+      next.add(duration);
+    }
+    setSelectedDurations(next);
+  };
+
+  const toggleTag = (tag: string) => {
+    const next = new Set(selectedTags);
+    if (next.has(tag)) {
+      next.delete(tag);
+    } else {
+      next.add(tag);
+    }
+    setSelectedTags(next);
+  };
+
+  const removeTag = (tag: string) => {
+    const next = new Set(selectedTags);
+    next.delete(tag);
+    setSelectedTags(next);
+  };
+
+  const isWithinDateRange = useCallback((planDate: Date) => {
+    if (dateRange === 'all') return true;
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (dateRange === 'last-30') {
+      const cutoff = new Date(startOfToday);
+      cutoff.setDate(cutoff.getDate() - 30);
+      return planDate >= cutoff;
+    }
+    if (dateRange === 'last-90') {
+      const cutoff = new Date(startOfToday);
+      cutoff.setDate(cutoff.getDate() - 90);
+      return planDate >= cutoff;
+    }
+    // Hockey season: Aug 1 -> Jul 31
+    const seasonStartYear = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+    const seasonStart = new Date(seasonStartYear, 7, 1);
+    const seasonEnd = new Date(seasonStartYear + 1, 6, 31, 23, 59, 59, 999);
+    return planDate >= seasonStart && planDate <= seasonEnd;
+  }, [dateRange]);
+
+  const filteredTagCategories = useMemo(() => {
+    const query = tagSearchQuery.toLowerCase().trim();
+    if (!query) {
+      return DRILL_TAG_CATEGORY_NAMES.map(category => ({
+        category,
+        tags: [...DRILL_TAG_CATEGORIES[category]],
+      }));
+    }
+    return DRILL_TAG_CATEGORY_NAMES
+      .map(category => ({
+        category,
+        tags: DRILL_TAG_CATEGORIES[category].filter(tag =>
+          tag.toLowerCase().includes(query)
+        ),
+      }))
+      .filter(({ tags }) => tags.length > 0);
+  }, [tagSearchQuery]);
+
+  const planSummaries = useMemo(() => {
+    return practicePlans.map((plan) => {
+      const timelineDrills = plan.timeline ? flattenTimelineDrills(plan.timeline) : [];
+      const allDrills = timelineDrills.length > 0 ? timelineDrills : plan.drills;
+      const drillNames = allDrills.map(d => d.drill.name);
+      const tagSet = new Set<string>();
+      for (const drill of allDrills) {
+        if (drill.drill.tags && drill.drill.tags.length > 0) {
+          for (const tag of drill.drill.tags) {
+            tagSet.add(tag);
+          }
+        }
+      }
+      const hasGroups = !!plan.timeline?.some(item => item.type === 'parallel');
+      const drillCount = timelineDrills.length || plan.drills.length;
+      return { plan, drillCount, hasGroups, planDate: getPlanDate(plan), drillNames, tagSet };
+    });
+  }, [practicePlans]);
+
+  const filteredPlans = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return planSummaries.filter(({ plan, drillCount, hasGroups, planDate, drillNames, tagSet }) => {
+      const locationLabel = getLocationLabel(plan.location);
+      const matchesSearch = !query || [
+        plan.name,
+        plan.description,
+        plan.notes,
+        ...drillNames,
+      ]
+        .filter(Boolean)
+        .some(value => value.toLowerCase().includes(query));
+
+      const matchesDateRange = isWithinDateRange(planDate);
+
+      const matchesDuration =
+        selectedDurations.size === 0 || selectedDurations.has(plan.duration);
+
+      const matchesTags =
+        selectedTags.size === 0 ||
+        Array.from(selectedTags).some(tag => tagSet.has(tag));
+
+      const matchesLocation =
+        !locationQuery.trim() ||
+        locationLabel.toLowerCase().includes(locationQuery.trim().toLowerCase());
+
+      const matchesGroup =
+        groupFilter === 'all' ||
+        (groupFilter === 'with-groups' && hasGroups) ||
+        (groupFilter === 'no-groups' && !hasGroups);
+
+      return matchesSearch && matchesDateRange && matchesDuration && matchesTags && matchesLocation && matchesGroup && drillCount >= 0;
+    });
+  }, [planSummaries, searchQuery, selectedDurations, selectedTags, locationQuery, groupFilter, isWithinDateRange]);
+
+  const sortedPlans = useMemo(() => {
+    const plansToSort = [...filteredPlans];
+    plansToSort.sort((a, b) => {
+      const getName = (p: PracticePlan) => p.name?.toLowerCase() ?? '';
+      switch (sortBy) {
+        case 'name-asc':
+          return getName(a.plan).localeCompare(getName(b.plan));
+        case 'name-desc':
+          return getName(b.plan).localeCompare(getName(a.plan));
+        case 'date-asc':
+          return a.planDate.getTime() - b.planDate.getTime();
+        case 'date-desc':
+          return b.planDate.getTime() - a.planDate.getTime();
+        case 'updated-desc': {
+          const aUpdated = a.plan.updatedAt ? new Date(a.plan.updatedAt).getTime() : 0;
+          const bUpdated = b.plan.updatedAt ? new Date(b.plan.updatedAt).getTime() : 0;
+          return bUpdated - aUpdated;
+        }
+        case 'drills-asc':
+          return a.drillCount - b.drillCount;
+        case 'drills-desc':
+          return b.drillCount - a.drillCount;
+        default:
+          return b.planDate.getTime() - a.planDate.getTime();
+      }
+    });
+    return plansToSort;
+  }, [filteredPlans, sortBy]);
+
+  const hasActiveFilters = dateRange !== 'all' ||
+    selectedDurations.size > 0 ||
+    selectedTags.size > 0 ||
+    locationQuery.trim().length > 0 ||
+    groupFilter !== 'all';
+  const activeFilterCount =
+    (dateRange !== 'all' ? 1 : 0) +
+    (selectedDurations.size > 0 ? 1 : 0) +
+    (selectedTags.size > 0 ? 1 : 0) +
+    (locationQuery.trim().length > 0 ? 1 : 0) +
+    (groupFilter !== 'all' ? 1 : 0);
+
   // Layout config - see src/lib/layoutConfig.ts to adjust
   const S = LAYOUT_STYLES;
 
@@ -422,17 +751,296 @@ export default function HistoryPage() {
         </p>
       </div>
 
+      {/* Search and Actions Bar */}
+      <div className="flex flex-col sm:flex-row gap-3 mb-4">
+        <div className="flex-1 flex gap-2">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search practice plans..."
+              className="pl-9 text-sm"
+            />
+          </div>
+          
+          {/* Filter Button */}
+          <div className="relative">
+            <button
+              ref={filterButtonRef}
+              type="button"
+              onClick={() => setIsFilterOpen(!isFilterOpen)}
+              className={`
+                flex items-center gap-1.5 px-4 py-2.5 rounded-xl border text-sm font-medium transition-all h-full
+                ${hasActiveFilters
+                  ? 'bg-primary-50 dark:bg-primary-900/20 border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300'
+                  : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                }
+              `}
+            >
+              <Filter className="w-4 h-4" />
+              {activeFilterCount > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-primary-600 text-white">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+
+            {/* Filter Popover */}
+            {isFilterOpen && (
+              <div
+                ref={filterPopoverRef}
+                className="absolute right-0 top-full mt-2 w-96 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50"
+              >
+                <div className="p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Filters</h3>
+                    {hasActiveFilters && (
+                      <button
+                        type="button"
+                        onClick={clearAllFilters}
+                        className="text-xs text-primary-600 dark:text-primary-400 hover:underline"
+                      >
+                        Clear all
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Date Range Filter */}
+                  <div className="mb-4">
+                    <label htmlFor="filter-date-range" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                      Date Range
+                    </label>
+                    <select
+                      id="filter-date-range"
+                      value={dateRange}
+                      onChange={(e) => setDateRange(e.target.value as typeof dateRange)}
+                      className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm py-2 px-3 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    >
+                      {DATE_RANGE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Duration Filter */}
+                  <div className="mb-4">
+                    <p className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                      Duration
+                    </p>
+                    {selectedDurations.size > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        {Array.from(selectedDurations).map(duration => (
+                          <span
+                            key={duration}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300"
+                          >
+                            {duration}
+                            <button
+                              type="button"
+                              onClick={() => toggleDuration(duration)}
+                              className="hover:opacity-70"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {PRACTICE_DURATIONS.map(duration => (
+                        <button
+                          key={duration}
+                          type="button"
+                          onClick={() => toggleDuration(duration)}
+                          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors text-center whitespace-nowrap ${
+                            selectedDurations.has(duration)
+                              ? 'bg-primary-50 dark:bg-primary-900/20 border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300'
+                              : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'
+                          }`}
+                        >
+                          {duration}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Tags Filter */}
+                  <div className="mb-4">
+                    <label htmlFor="filter-tags" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                      Tags
+                    </label>
+                    {selectedTags.size > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        {Array.from(selectedTags).map(tag => (
+                          <span
+                            key={tag}
+                            className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs ${getTagColor(tag)}`}
+                          >
+                            {tag}
+                            <button type="button" onClick={() => removeTag(tag)} className="hover:opacity-70">
+                              <X className="w-2.5 h-2.5" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="relative" ref={tagDropdownRef}>
+                      <div
+                        className="flex items-center gap-2 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 cursor-pointer"
+                        onClick={() => setIsTagDropdownOpen(!isTagDropdownOpen)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') setIsTagDropdownOpen(!isTagDropdownOpen); }}
+                        role="combobox"
+                        aria-expanded={isTagDropdownOpen}
+                        tabIndex={0}
+                      >
+                        <Search className="w-3.5 h-3.5 text-gray-400" />
+                        <input
+                          id="filter-tags"
+                          type="text"
+                          value={tagSearchQuery}
+                          onChange={(e) => { setTagSearchQuery(e.target.value); setIsTagDropdownOpen(true); }}
+                          onFocus={() => setIsTagDropdownOpen(true)}
+                          placeholder={selectedTags.size > 0 ? "Add more..." : "Search tags..."}
+                          className="flex-1 bg-transparent outline-none text-sm text-gray-900 dark:text-white placeholder-gray-400"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${isTagDropdownOpen ? 'rotate-180' : ''}`} />
+                      </div>
+                      {isTagDropdownOpen && (
+                        <div className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                          {filteredTagCategories.length === 0 ? (
+                            <div className="p-2 text-sm text-gray-500 text-center">No tags found</div>
+                          ) : (
+                            <div className="py-1">
+                              {filteredTagCategories.map(({ category, tags: categoryTags }) => (
+                                <div key={category}>
+                                  <div className="sticky top-0 bg-gray-100 dark:bg-gray-800 px-3 py-1 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                                    {category}
+                                  </div>
+                                  <ul>
+                                    {categoryTags.map(tag => (
+                                      <li key={tag}>
+                                        <button
+                                          type="button"
+                                          onClick={() => { toggleTag(tag); setTagSearchQuery(''); }}
+                                          className={`w-full flex items-center justify-between px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-600 text-left ${
+                                            selectedTags.has(tag) ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300' : 'text-gray-700 dark:text-gray-300'
+                                          }`}
+                                        >
+                                          <span>{tag}</span>
+                                          {selectedTags.has(tag) && <Check className="w-3.5 h-3.5" />}
+                                        </button>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Location Filter */}
+                  <div className="mb-4">
+                    <label htmlFor="filter-location" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                      Location
+                    </label>
+                    <Input
+                      id="filter-location"
+                      value={locationQuery}
+                      onChange={(e) => setLocationQuery(e.target.value)}
+                      placeholder="Filter by location..."
+                      className="text-sm"
+                    />
+                  </div>
+
+                  {/* Groups Filter */}
+                  <div className="mb-2">
+                    <label htmlFor="filter-groups" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                      Groups
+                    </label>
+                    <select
+                      id="filter-groups"
+                      value={groupFilter}
+                      onChange={(e) => setGroupFilter(e.target.value as typeof groupFilter)}
+                      className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm py-2 px-3 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    >
+                      {GROUP_FILTER_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sort Button */}
+          <div className="relative">
+            <button
+              ref={sortButtonRef}
+              type="button"
+              onClick={() => setIsSortOpen(!isSortOpen)}
+              className={`
+                flex items-center gap-1.5 px-4 py-2.5 rounded-xl border text-sm font-medium transition-all h-full
+                ${isSortOpen
+                  ? 'bg-primary-50 dark:bg-primary-900/20 border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300'
+                  : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                }
+              `}
+            >
+              <ArrowUpDown className="w-4 h-4" />
+            </button>
+
+            {isSortOpen && (
+              <div
+                ref={sortPopoverRef}
+                className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50"
+              >
+                <div className="py-1">
+                  {SORT_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => {
+                        setSortBy(option.value);
+                        setIsSortOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-left ${
+                        sortBy === option.value
+                          ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+                          : 'text-gray-700 dark:text-gray-300'
+                      }`}
+                    >
+                      <span>{option.label}</span>
+                      {sortBy === option.value && <Check className="w-4 h-4" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Practice Plans List */}
       {isLoading ? (
         <div className="text-center py-8">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-3"></div>
           <p className="text-gray-500 dark:text-gray-400">Loading practice plans...</p>
         </div>
-      ) : practicePlans && practicePlans.length > 0 ? (
+      ) : sortedPlans && sortedPlans.length > 0 ? (
         <div className="space-y-3">
-          {practicePlans.map((plan) => {
-            const practiceDate = plan.date instanceof Date ? plan.date : new Date(plan.date);
+          {sortedPlans.map(({ plan, planDate }) => {
             const isExpanded = expandedPlanId === plan.id;
+            const locationLabel = getLocationLabel(plan.location);
             
             return (
               <Card key={plan.id} className="overflow-hidden" style={S.card}>
@@ -446,7 +1054,7 @@ export default function HistoryPage() {
                       <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-xs text-gray-600 dark:text-gray-400">
                         <div className="flex items-center gap-1">
                           <Calendar className="w-3.5 h-3.5" />
-                          <span>{format(practiceDate, 'MMM d, yyyy')}</span>
+                          <span>{format(planDate, 'MMM d, yyyy')}</span>
                         </div>
                         <div className="flex items-center gap-1">
                           <Clock className="w-3.5 h-3.5" />
@@ -454,7 +1062,7 @@ export default function HistoryPage() {
                         </div>
                         <div className="flex items-center gap-1">
                           <MapPin className="w-3.5 h-3.5" />
-                          <span>{plan.location}</span>
+                          <span>{locationLabel || '—'}</span>
                         </div>
                       </div>
                       {plan.description && (
@@ -595,10 +1203,12 @@ export default function HistoryPage() {
         <div className="text-center py-8 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800">
           <History className="w-10 h-10 text-gray-400 mx-auto mb-3" />
           <h3 className="text-base font-medium text-gray-900 dark:text-white mb-1">
-            No practice plans yet
+            {searchQuery || hasActiveFilters ? 'No plans found' : 'No practice plans yet'}
           </h3>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            Create your first practice plan to see it here
+            {searchQuery || hasActiveFilters
+              ? 'Try adjusting your search or filters'
+              : 'Create your first practice plan to see it here'}
           </p>
         </div>
       )}

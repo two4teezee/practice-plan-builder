@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from './supabase';
-import type { Drill, PracticePlan, PracticePlanDrill, TimelineItem } from './types';
+import type { Drill, PracticePlan, PracticePlanDrill, TimelineItem, Location } from './types';
 
 // ============================================
 // Database Row Types (snake_case from Supabase)
@@ -34,7 +34,7 @@ interface PracticePlanRow {
   description: string;
   date: string;
   duration: string;
-  location: string;
+  location: Location | null;  // JSONB from database
   notes: string;
   equipment: string;
   timeline: TimelineItem[];
@@ -96,13 +96,26 @@ function drillAppToRow(drill: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>): Om
 }
 
 function practicePlanRowToApp(row: PracticePlanRow): PracticePlan {
+  // Parse location - handle both JSONB object and legacy string format
+  let location: Location | null = null;
+  if (row.location) {
+    if (typeof row.location === 'object') {
+      // Ensure backward compatibility - older records may not have 'name' field
+      location = {
+        ...row.location,
+        name: row.location.name || row.location.formattedAddress,
+      };
+    }
+    // Legacy string locations are ignored (migrated to null)
+  }
+
   return {
     id: row.id,
     name: row.name,
     description: row.description || '',
     date: new Date(row.date),
     duration: row.duration as PracticePlan['duration'],
-    location: row.location || '',
+    location,
     notes: row.notes || '',
     equipment: row.equipment || '',
     timeline: row.timeline || [],

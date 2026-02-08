@@ -11,10 +11,18 @@ import { DrillForm } from '@/components/drills/DrillForm';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Plus, Search, Library, Save, Filter, X, Check, ChevronDown } from 'lucide-react';
+import { Plus, Search, Library, Save, Filter, X, Check, ChevronDown, LayoutGrid, Rows, ArrowUpDown } from 'lucide-react';
 import { LAYOUT_STYLES } from '@/lib/layoutConfig';
 
 const FILTER_STORAGE_KEY = 'drills-filter';
+const SORT_STORAGE_KEY = 'drills-sort';
+const SORT_OPTIONS = [
+  { value: 'name-asc', label: 'Name (A–Z)' },
+  { value: 'name-desc', label: 'Name (Z–A)' },
+  { value: 'category-asc', label: 'Category (A–Z)' },
+  { value: 'updated-desc', label: 'Recently Updated' },
+  { value: 'created-desc', label: 'Recently Created' },
+] as const;
 
 export default function DrillsPage() {
   const { user } = useAuth();
@@ -32,9 +40,14 @@ export default function DrillsPage() {
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const filterPopoverRef = useRef<HTMLDivElement>(null);
+  const [isSortOpen, setIsSortOpen] = useState(false);
+  const sortButtonRef = useRef<HTMLButtonElement>(null);
+  const sortPopoverRef = useRef<HTMLDivElement>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const [drills, setDrills] = useState<Drill[]>([]);
   const [isLoadingDrills, setIsLoadingDrills] = useState(true);
+  const [cardLayout, setCardLayout] = useState<'rect' | 'square'>('rect');
+  const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'category-asc' | 'updated-desc' | 'created-desc'>('name-asc');
 
   // Filter tags by category based on search
   const filteredTagCategories = useMemo(() => {
@@ -110,7 +123,25 @@ export default function DrillsPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isFilterOpen]);
 
-  // Load saved filters from localStorage
+  // Close sort popover when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        isSortOpen &&
+        sortPopoverRef.current &&
+        sortButtonRef.current &&
+        !sortPopoverRef.current.contains(event.target as Node) &&
+        !sortButtonRef.current.contains(event.target as Node)
+      ) {
+        setIsSortOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isSortOpen]);
+
+  // Load saved filters + sort from localStorage
   useEffect(() => {
     try {
       const saved = localStorage.getItem(FILTER_STORAGE_KEY);
@@ -123,13 +154,17 @@ export default function DrillsPage() {
           setSelectedTags(new Set(parsed.tags));
         }
       }
+      const savedSort = localStorage.getItem(SORT_STORAGE_KEY);
+      if (savedSort && SORT_OPTIONS.some(option => option.value === savedSort)) {
+        setSortBy(savedSort as typeof sortBy);
+      }
     } catch (error) {
       console.error('Failed to load filters:', error);
     }
     setIsLoaded(true);
   }, []);
 
-  // Save filters to localStorage
+  // Save filters + sort to localStorage
   useEffect(() => {
     if (!isLoaded) return;
     try {
@@ -140,10 +175,11 @@ export default function DrillsPage() {
           tags: Array.from(selectedTags),
         })
       );
+      localStorage.setItem(SORT_STORAGE_KEY, sortBy);
     } catch (error) {
       console.error('Failed to save filters:', error);
     }
-  }, [selectedCategories, selectedTags, isLoaded]);
+  }, [selectedCategories, selectedTags, sortBy, isLoaded]);
 
   const isAllCategoriesSelected = selectedCategories.size === DRILL_CATEGORIES.length;
   const hasTagsFilter = selectedTags.size > 0;
@@ -183,6 +219,42 @@ export default function DrillsPage() {
       drill.tags?.some(tag => selectedTags.has(tag));
     return matchesSearch && matchesCategory && matchesTags;
   });
+
+  const sortedDrills = useMemo(() => {
+    if (!filteredDrills) return [];
+    const drillsToSort = [...filteredDrills];
+    const getName = (drill: Drill) => drill.name?.toLowerCase() ?? '';
+    const getCategory = (drill: Drill) => drill.category?.toLowerCase() ?? '';
+    const getTime = (value?: Date | string | null) => (value ? new Date(value).getTime() : 0);
+
+    drillsToSort.sort((a, b) => {
+      switch (sortBy) {
+        case 'name-asc':
+          return getName(a).localeCompare(getName(b));
+        case 'name-desc':
+          return getName(b).localeCompare(getName(a));
+        case 'category-asc': {
+          const categoryCompare = getCategory(a).localeCompare(getCategory(b));
+          if (categoryCompare !== 0) return categoryCompare;
+          return getName(a).localeCompare(getName(b));
+        }
+        case 'updated-desc': {
+          const updatedDiff = getTime(b.updatedAt) - getTime(a.updatedAt);
+          if (updatedDiff !== 0) return updatedDiff;
+          return getName(a).localeCompare(getName(b));
+        }
+        case 'created-desc': {
+          const createdDiff = getTime(b.createdAt) - getTime(a.createdAt);
+          if (createdDiff !== 0) return createdDiff;
+          return getName(a).localeCompare(getName(b));
+        }
+        default:
+          return getName(a).localeCompare(getName(b));
+      }
+    });
+
+    return drillsToSort;
+  }, [filteredDrills, sortBy]);
 
   const handleSave = async (drillData: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>) => {
     try {
@@ -399,7 +471,6 @@ export default function DrillsPage() {
               `}
             >
               <Filter className="w-4 h-4" />
-              <span>Filter</span>
               {activeFilterCount > 0 && (
                 <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-primary-600 text-white">
                   {activeFilterCount}
@@ -572,6 +643,79 @@ export default function DrillsPage() {
             )}
           </div>
 
+          {/* Sort Button */}
+          <div className="relative">
+            <button
+              ref={sortButtonRef}
+              type="button"
+              onClick={() => setIsSortOpen(!isSortOpen)}
+              className={`
+                flex items-center gap-1.5 px-4 py-2.5 rounded-xl border text-sm font-medium transition-all h-full
+                ${isSortOpen
+                  ? 'bg-primary-50 dark:bg-primary-900/20 border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300'
+                  : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                }
+              `}
+            >
+              <ArrowUpDown className="w-4 h-4" />
+            </button>
+
+            {isSortOpen && (
+              <div
+                ref={sortPopoverRef}
+                className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50"
+              >
+                <div className="py-1">
+                  {SORT_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => {
+                        setSortBy(option.value);
+                        setIsSortOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-left ${
+                        sortBy === option.value
+                          ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+                          : 'text-gray-700 dark:text-gray-300'
+                      }`}
+                    >
+                      <span>{option.label}</span>
+                      {sortBy === option.value && <Check className="w-4 h-4" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="inline-flex rounded-xl border border-gray-300 dark:border-gray-600 overflow-hidden h-full">
+            <button
+              type="button"
+              onClick={() => setCardLayout('rect')}
+              aria-pressed={cardLayout === 'rect'}
+              className={`flex items-center gap-1.5 px-3 py-2.5 text-sm font-medium transition-all ${
+                cardLayout === 'rect'
+                  ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+                  : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+              }`}
+            >
+              <Rows className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setCardLayout('square')}
+              aria-pressed={cardLayout === 'square'}
+              className={`flex items-center gap-1.5 px-3 py-2.5 text-sm font-medium transition-all border-l border-gray-300 dark:border-gray-600 ${
+                cardLayout === 'square'
+                  ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+                  : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+              }`}
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+          </div>
+
         </div>
         <Button size="sm" onClick={handleNewDrill}>
           <Plus className="w-4 h-4" />
@@ -585,13 +729,20 @@ export default function DrillsPage() {
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-3"></div>
           <p className="text-gray-500 dark:text-gray-400">Loading drills...</p>
         </div>
-      ) : filteredDrills && filteredDrills.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          {filteredDrills.map((drill) => (
+      ) : sortedDrills && sortedDrills.length > 0 ? (
+        <div
+          className={
+            cardLayout === 'square'
+              ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4'
+              : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3'
+          }
+        >
+          {sortedDrills.map((drill) => (
             <DrillCard
               key={drill.id}
               drill={drill}
               onClick={handleCardClick}
+              cardLayout={cardLayout}
             />
           ))}
         </div>

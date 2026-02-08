@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS practice_plans (
   description TEXT DEFAULT '',
   date DATE NOT NULL,
   duration TEXT NOT NULL,
-  location TEXT DEFAULT '',
+  location JSONB DEFAULT NULL,  -- Google Places location data (placeId, formattedAddress, lat, lng)
   notes TEXT DEFAULT '',
   equipment TEXT DEFAULT '',
   timeline JSONB DEFAULT '[]'::jsonb,
@@ -121,6 +121,15 @@ CREATE TABLE IF NOT EXISTS practice_plans (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migration: Convert location from TEXT to JSONB (for existing databases)
+-- Run these commands if upgrading from an older schema:
+-- ALTER TABLE practice_plans ALTER COLUMN location TYPE JSONB USING NULL;
+-- Or to preserve old location strings as formatted_address:
+-- ALTER TABLE practice_plans ALTER COLUMN location TYPE JSONB 
+--   USING CASE WHEN location IS NOT NULL AND location != '' 
+--     THEN jsonb_build_object('formattedAddress', location, 'placeId', '', 'lat', 0, 'lng', 0) 
+--     ELSE NULL END;
 
 -- Create indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_drills_name ON drills(name);

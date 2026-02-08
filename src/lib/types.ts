@@ -9,6 +9,15 @@ export interface UserReference {
   email?: string;
 }
 
+// Location data from Google Places API
+export interface Location {
+  placeId: string;          // Google Place ID for future lookups
+  name: string;             // Place name (e.g., "Hylo Park Arena")
+  formattedAddress: string; // Full address
+  lat: number;              // Latitude for proximity filtering
+  lng: number;              // Longitude for proximity filtering
+}
+
 export interface Drill {
   id?: string; // UUID from Supabase
   name: string;
@@ -304,7 +313,7 @@ export interface PracticePlan {
   description: string;
   date: Date;
   duration: PracticeDuration;
-  location: string;
+  location: Location | null;  // Google Places location data for filtering
   drills: PracticePlanDrill[]; // Legacy: kept for backward compatibility
   timeline: TimelineItem[];    // New: branching timeline structure
   notes: string;
