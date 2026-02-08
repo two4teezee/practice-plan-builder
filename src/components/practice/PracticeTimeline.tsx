@@ -335,7 +335,7 @@ export function PracticeTimeline({ timeline, practiceDuration }: PracticeTimelin
 
   if (timeline.length === 0) {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-3">
         <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 mb-2">
           <Clock className="w-3.5 h-3.5" />
           <span className="text-xs font-medium">Practice Timeline</span>
@@ -351,7 +351,7 @@ export function PracticeTimeline({ timeline, practiceDuration }: PracticeTimelin
   const trackHeight = hasParallelBlocks ? Math.max(40, maxParallelTracks * 30 + 10) : 40;
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 p-3">
       {/* Header */}
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">

@@ -32,6 +32,7 @@ interface PracticePlanRow {
   id: string;
   name: string;
   description: string;
+  team_name: string;
   date: string;
   duration: string;
   location: Location | null;  // JSONB from database
@@ -113,6 +114,7 @@ function practicePlanRowToApp(row: PracticePlanRow): PracticePlan {
     id: row.id,
     name: row.name,
     description: row.description || '',
+    teamName: row.team_name || '',
     date: new Date(row.date),
     duration: row.duration as PracticePlan['duration'],
     location,
@@ -134,6 +136,7 @@ function practicePlanAppToRow(plan: Omit<PracticePlan, 'id' | 'createdAt' | 'upd
   return {
     name: plan.name,
     description: plan.description,
+    team_name: plan.teamName || '',
     date: dateStr,
     duration: plan.duration,
     location: plan.location,
@@ -502,6 +505,33 @@ export async function deletePracticePlan(id: string): Promise<void> {
   
   if (error) {
     console.error('Error deleting practice plan:', error);
+    throw error;
+  }
+}
+
+// ============================================
+// Feedback Operations
+// ============================================
+
+export async function createFeedback(
+  message: string,
+  options?: { fullName?: string; userId?: string }
+): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    console.warn('Supabase not configured, skipping feedback insert');
+    return;
+  }
+
+  const { error } = await supabase
+    .from('feedback')
+    .insert({
+      message,
+      full_name: options?.fullName || '',
+      user_id: options?.userId || null,
+    });
+
+  if (error) {
+    console.error('Error creating feedback:', error);
     throw error;
   }
 }

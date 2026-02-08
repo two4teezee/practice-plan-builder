@@ -11,7 +11,8 @@ import {
   Menu,
   X,
   LogOut,
-  User
+  User,
+  MessageSquare
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useState, useEffect } from 'react';
@@ -35,7 +36,11 @@ const navItems = [
   },
 ];
 
-export function Sidebar() {
+interface SidebarProps {
+  onFeedbackClick?: () => void;
+}
+
+export function Sidebar({ onFeedbackClick }: SidebarProps) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const { profile, signOut, isAuthenticated } = useAuth();
@@ -52,6 +57,11 @@ export function Sidebar() {
 
   const handleSignOut = async () => {
     await signOut();
+    setMobileMenuOpen(false);
+  };
+
+  const handleFeedbackClick = () => {
+    onFeedbackClick?.();
     setMobileMenuOpen(false);
   };
 
@@ -175,6 +185,18 @@ export function Sidebar() {
                 )}
               </>
             )}
+          </button>
+
+          {/* Feedback Button */}
+          <button
+            type="button"
+            onClick={handleFeedbackClick}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl 
+                       bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300
+                       hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors duration-200"
+          >
+            <MessageSquare className="w-5 h-5" />
+            <span>Feedback</span>
           </button>
 
           {/* Sign Out Button */}

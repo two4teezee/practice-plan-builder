@@ -1,7 +1,9 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+import { useState } from 'react';
 import { Sidebar } from '@/components/Sidebar';
+import { FeedbackWidget } from '@/components/FeedbackWidget';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -12,6 +14,7 @@ const authRoutes = ['/login', '/register'];
 
 export function AppLayout({ children }: AppLayoutProps) {
   const pathname = usePathname();
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   
   // Check if current route is an auth page
   const isAuthPage = authRoutes.includes(pathname);
@@ -24,12 +27,13 @@ export function AppLayout({ children }: AppLayoutProps) {
   // Protected pages get the full layout with sidebar
   return (
     <div className="flex min-h-screen bg-gray-50 dark:bg-gray-950">
-      <Sidebar />
+      <Sidebar onFeedbackClick={() => setIsFeedbackOpen(true)} />
       <main className="flex-1 lg:ml-0 min-h-screen">
         <div className="p-2 lg:p-3 pt-14 lg:pt-3">
           {children}
         </div>
       </main>
+      <FeedbackWidget isOpen={isFeedbackOpen} onClose={() => setIsFeedbackOpen(false)} />
     </div>
   );
 }

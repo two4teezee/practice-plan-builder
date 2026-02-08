@@ -62,6 +62,7 @@ interface DraftData {
   formData: {
     name: string;
     description: string;
+    teamName: string;
     date: string;
     duration: PracticeDuration;
     location: Location | null;
@@ -74,6 +75,7 @@ interface DraftData {
 const getDefaultFormData = () => ({
   name: format(new Date(), 'MMMM d, yyyy') + ' Practice',
   description: '',
+  teamName: '',
   date: format(new Date(), 'yyyy-MM-dd'),
   duration: '50 minutes' as PracticeDuration,
   location: null as Location | null,
@@ -98,6 +100,7 @@ export default function CreatePracticePlanPage() {
   const [duplicatePlanId, setDuplicatePlanId] = useState<string | null>(null);
   const [newPlanName, setNewPlanName] = useState('');
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
+  const [isTeamNameOpen, setIsTeamNameOpen] = useState(false);
   
   const [formData, setFormData] = useState(getDefaultFormData);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
@@ -125,6 +128,10 @@ export default function CreatePracticePlanPage() {
     }
   }, []);
 
+  useEffect(() => {
+    fetchSavedPlans();
+  }, [fetchSavedPlans]);
+
   // Load saved plans when modal opens
   useEffect(() => {
     if (isLoadModalOpen) {
@@ -135,6 +142,21 @@ export default function CreatePracticePlanPage() {
   // Compute legacy drills array from timeline for backward compatibility
   const drills = useMemo(() => convertTimelineToDrills(timeline), [timeline]);
 
+  const teamNameOptions = useMemo(() => {
+    const unique = new Set<string>();
+    for (const plan of savedPlans) {
+      const value = plan.teamName?.trim();
+      if (value) unique.add(value);
+    }
+    return Array.from(unique).sort((a, b) => a.localeCompare(b));
+  }, [savedPlans]);
+
+  const filteredTeamNameOptions = useMemo(() => {
+    const query = formData.teamName.trim().toLowerCase();
+    if (!query) return teamNameOptions;
+    return teamNameOptions.filter(option => option.toLowerCase().includes(query));
+  }, [formData.teamName, teamNameOptions]);
+
   // Load draft from localStorage on mount, or add default drill if no draft
   useEffect(() => {
     const initializePlan = async () => {
@@ -143,7 +165,11 @@ export default function CreatePracticePlanPage() {
         if (saved) {
           // Load existing draft
           const draft: DraftData = JSON.parse(saved);
-          setFormData(draft.formData);
+          setFormData({
+            ...getDefaultFormData(),
+            ...draft.formData,
+            teamName: draft.formData.teamName ?? '',
+          });
           // Prefer timeline if available, otherwise convert legacy drills
           if (draft.timeline && draft.timeline.length > 0) {
             setTimeline(draft.timeline);
@@ -470,6 +496,7 @@ export default function CreatePracticePlanPage() {
       const practicePlan: Omit<PracticePlan, 'id' | 'createdAt' | 'updatedAt'> = {
         name: overrideName || formData.name,
         description: formData.description,
+        teamName: formData.teamName.trim(),
         date: new Date(formData.date),
         duration: formData.duration,
         location: formData.location,
@@ -503,6 +530,7 @@ export default function CreatePracticePlanPage() {
       await updatePracticePlan(planId, {
         name: formData.name,
         description: formData.description,
+        teamName: formData.teamName.trim(),
         date: new Date(formData.date),
         duration: formData.duration,
         location: formData.location,
@@ -563,6 +591,7 @@ export default function CreatePracticePlanPage() {
     setFormData({
       name: plan.name,
       description: plan.description || '',
+      teamName: plan.teamName || '',
       date: format(new Date(plan.date), 'yyyy-MM-dd'),
       duration: plan.duration,
       location: plan.location,
@@ -647,6 +676,47 @@ export default function CreatePracticePlanPage() {
                   className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                   style={S.detailsInput}
                 />
+              </div>
+
+              <div className="relative">
+                <label 
+                  htmlFor="teamName" 
+                  className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
+                  style={S.detailsLabel}
+                >
+                  Team Name
+                </label>
+                <input
+                  id="teamName"
+                  type="text"
+                  value={formData.teamName}
+                  onChange={(e) => setFormData({ ...formData, teamName: e.target.value })}
+                  placeholder="Enter team name"
+                  onFocus={() => setIsTeamNameOpen(true)}
+                  onBlur={() => {
+                    window.setTimeout(() => setIsTeamNameOpen(false), 100);
+                  }}
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  style={S.detailsInput}
+                />
+                {isTeamNameOpen && filteredTeamNameOptions.length > 0 && (
+                  <div className="absolute z-50 left-0 right-0 mt-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg max-h-40 overflow-y-auto">
+                    {filteredTeamNameOptions.map((teamName) => (
+                      <button
+                        key={teamName}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          setFormData({ ...formData, teamName });
+                          setIsTeamNameOpen(false);
+                        }}
+                        className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                      >
+                        {teamName}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2" style={S.formRowGap}>
