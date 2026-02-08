@@ -311,6 +311,7 @@ export interface PracticePlan {
   id?: string; // UUID from Supabase
   name: string;
   description: string;
+  teamName: string;
   date: Date;
   duration: PracticeDuration;
   location: Location | null;  // Google Places location data for filtering

@@ -33,7 +33,8 @@ import {
   Filter,
   ArrowUpDown,
   Check,
-  X
+  X,
+  Users
 } from 'lucide-react';
 import { LAYOUT_STYLES } from '@/lib/layoutConfig';
 
@@ -392,6 +393,7 @@ export default function HistoryPage() {
   const [isTagDropdownOpen, setIsTagDropdownOpen] = useState(false);
   const tagDropdownRef = useRef<HTMLDivElement>(null);
   const [locationQuery, setLocationQuery] = useState('');
+  const [teamNameQuery, setTeamNameQuery] = useState('');
   const [groupFilter, setGroupFilter] = useState<typeof GROUP_FILTER_OPTIONS[number]['value']>('all');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
@@ -481,6 +483,7 @@ export default function HistoryPage() {
           durations?: string[];
           tags?: string[];
           locationQuery?: string;
+          teamNameQuery?: string;
           groupFilter?: typeof groupFilter;
         };
         if (parsed.dateRange && DATE_RANGE_OPTIONS.some(opt => opt.value === parsed.dateRange)) {
@@ -494,6 +497,9 @@ export default function HistoryPage() {
         }
         if (typeof parsed.locationQuery === 'string') {
           setLocationQuery(parsed.locationQuery);
+        }
+        if (typeof parsed.teamNameQuery === 'string') {
+          setTeamNameQuery(parsed.teamNameQuery);
         }
         if (parsed.groupFilter && GROUP_FILTER_OPTIONS.some(opt => opt.value === parsed.groupFilter)) {
           setGroupFilter(parsed.groupFilter);
@@ -520,6 +526,7 @@ export default function HistoryPage() {
           durations: Array.from(selectedDurations),
           tags: Array.from(selectedTags),
           locationQuery,
+          teamNameQuery,
           groupFilter,
         })
       );
@@ -527,7 +534,7 @@ export default function HistoryPage() {
     } catch (error) {
       console.error('Failed to save filters:', error);
     }
-  }, [dateRange, selectedDurations, selectedTags, locationQuery, groupFilter, sortBy, isLoaded]);
+  }, [dateRange, selectedDurations, selectedTags, locationQuery, teamNameQuery, groupFilter, sortBy, isLoaded]);
 
   const handleDelete = async (plan: PracticePlan) => {
     if (plan.id && confirm(`Are you sure you want to delete "${plan.name}"?`)) {
@@ -563,6 +570,7 @@ export default function HistoryPage() {
     setSelectedDurations(new Set());
     setSelectedTags(new Set());
     setLocationQuery('');
+    setTeamNameQuery('');
     setGroupFilter('all');
   };
 
@@ -676,14 +684,18 @@ export default function HistoryPage() {
         !locationQuery.trim() ||
         locationLabel.toLowerCase().includes(locationQuery.trim().toLowerCase());
 
+      const matchesTeamName =
+        !teamNameQuery.trim() ||
+        plan.teamName?.toLowerCase().includes(teamNameQuery.trim().toLowerCase());
+
       const matchesGroup =
         groupFilter === 'all' ||
         (groupFilter === 'with-groups' && hasGroups) ||
         (groupFilter === 'no-groups' && !hasGroups);
 
-      return matchesSearch && matchesDateRange && matchesDuration && matchesTags && matchesLocation && matchesGroup && drillCount >= 0;
+      return matchesSearch && matchesDateRange && matchesDuration && matchesTags && matchesLocation && matchesTeamName && matchesGroup && drillCount >= 0;
     });
-  }, [planSummaries, searchQuery, selectedDurations, selectedTags, locationQuery, groupFilter, isWithinDateRange]);
+  }, [planSummaries, searchQuery, selectedDurations, selectedTags, locationQuery, teamNameQuery, groupFilter, isWithinDateRange]);
 
   const sortedPlans = useMemo(() => {
     const plansToSort = [...filteredPlans];
@@ -718,12 +730,14 @@ export default function HistoryPage() {
     selectedDurations.size > 0 ||
     selectedTags.size > 0 ||
     locationQuery.trim().length > 0 ||
+    teamNameQuery.trim().length > 0 ||
     groupFilter !== 'all';
   const activeFilterCount =
     (dateRange !== 'all' ? 1 : 0) +
     (selectedDurations.size > 0 ? 1 : 0) +
     (selectedTags.size > 0 ? 1 : 0) +
     (locationQuery.trim().length > 0 ? 1 : 0) +
+    (teamNameQuery.trim().length > 0 ? 1 : 0) +
     (groupFilter !== 'all' ? 1 : 0);
 
   // Layout config - see src/lib/layoutConfig.ts to adjust
@@ -959,6 +973,20 @@ export default function HistoryPage() {
                     />
                   </div>
 
+                  {/* Team Name Filter */}
+                  <div className="mb-4">
+                    <label htmlFor="filter-team-name" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                      Team Name
+                    </label>
+                    <Input
+                      id="filter-team-name"
+                      value={teamNameQuery}
+                      onChange={(e) => setTeamNameQuery(e.target.value)}
+                      placeholder="Filter by team name..."
+                      className="text-sm"
+                    />
+                  </div>
+
                   {/* Groups Filter */}
                   <div className="mb-2">
                     <label htmlFor="filter-groups" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
@@ -1064,6 +1092,12 @@ export default function HistoryPage() {
                           <MapPin className="w-3.5 h-3.5" />
                           <span>{locationLabel || '—'}</span>
                         </div>
+                        {plan.teamName && (
+                          <div className="flex items-center gap-1">
+                            <Users className="w-3.5 h-3.5" />
+                            <span>{plan.teamName}</span>
+                          </div>
+                        )}
                       </div>
                       {plan.description && (
                         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 line-clamp-1">
@@ -1241,6 +1275,12 @@ export default function HistoryPage() {
                 <p className="text-sm text-gray-500 dark:text-gray-400">Location</p>
                 <p className="font-medium text-gray-900 dark:text-white">
                   {getLocationLabel(selectedPlan.location)}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Team</p>
+                <p className="font-medium text-gray-900 dark:text-white">
+                  {selectedPlan.teamName || '—'}
                 </p>
               </div>
             </div>

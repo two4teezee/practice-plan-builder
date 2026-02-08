@@ -32,6 +32,7 @@ interface PracticePlanRow {
   id: string;
   name: string;
   description: string;
+  team_name: string;
   date: string;
   duration: string;
   location: Location | null;  // JSONB from database
@@ -113,6 +114,7 @@ function practicePlanRowToApp(row: PracticePlanRow): PracticePlan {
     id: row.id,
     name: row.name,
     description: row.description || '',
+    teamName: row.team_name || '',
     date: new Date(row.date),
     duration: row.duration as PracticePlan['duration'],
     location,
@@ -134,6 +136,7 @@ function practicePlanAppToRow(plan: Omit<PracticePlan, 'id' | 'createdAt' | 'upd
   return {
     name: plan.name,
     description: plan.description,
+    team_name: plan.teamName || '',
     date: dateStr,
     duration: plan.duration,
     location: plan.location,

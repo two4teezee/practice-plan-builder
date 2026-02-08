@@ -284,7 +284,13 @@ export async function exportPracticePlanToPDF(plan: PracticePlan) {
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   const practiceDate = normalizedPlan.date instanceof Date ? normalizedPlan.date : new Date(normalizedPlan.date);
-  const infoLine = `${format(practiceDate, 'MMM d, yyyy')} | ${normalizedPlan.duration} | ${getLocationLabel(normalizedPlan.location)}`;
+  const infoParts = [
+    format(practiceDate, 'MMM d, yyyy'),
+    normalizedPlan.duration,
+    getLocationLabel(normalizedPlan.location) || '',
+    normalizedPlan.teamName || '',
+  ].filter(Boolean);
+  const infoLine = infoParts.join(' | ');
   doc.text(infoLine, pageWidth / 2, y, { align: 'center' });
   y += 5;
 
@@ -651,6 +657,19 @@ export async function exportPracticePlanToWord(plan: PracticePlan) {
 
   // Build compact document
   const locationLabel = getLocationLabel(normalizedPlan.location);
+  const infoItems = [
+    format(practiceDate, 'MMM d, yyyy'),
+    normalizedPlan.duration,
+    locationLabel || '',
+    normalizedPlan.teamName || '',
+  ].filter(Boolean);
+  const infoRuns: TextRun[] = [];
+  infoItems.forEach((item, index) => {
+    if (index > 0) {
+      infoRuns.push(new TextRun({ text: ' | ', size: 20, color: '999999' }));
+    }
+    infoRuns.push(new TextRun({ text: item as string, size: 20 }));
+  });
   const headerChildren: Paragraph[] = [
     // Title
     new Paragraph({
@@ -659,13 +678,7 @@ export async function exportPracticePlanToWord(plan: PracticePlan) {
     }),
     // Info line - all on one line
     new Paragraph({
-      children: [
-        new TextRun({ text: format(practiceDate, 'MMM d, yyyy'), size: 20 }),
-        new TextRun({ text: ' | ', size: 20, color: '999999' }),
-        new TextRun({ text: normalizedPlan.duration, size: 20 }),
-        new TextRun({ text: ' | ', size: 20, color: '999999' }),
-        new TextRun({ text: locationLabel, size: 20 }),
-      ],
+      children: infoRuns,
       spacing: { after: 50 },
     }),
   ];
@@ -818,6 +831,13 @@ export async function printPracticePlan(plan: PracticePlan) {
   
   const practiceDate = normalizedPlan.date instanceof Date ? normalizedPlan.date : new Date(normalizedPlan.date);
   const allDrills = flattenTimelineDrills(normalizedPlan.timeline);
+  const infoParts = [
+    format(practiceDate, 'MMM d, yyyy'),
+    normalizedPlan.duration,
+    getLocationLabel(normalizedPlan.location) || '',
+    normalizedPlan.teamName || '',
+  ].filter(Boolean);
+  const infoLine = infoParts.join(' | ');
   
   // Generate timeline HTML
   let timelineHtml: string;
@@ -881,7 +901,7 @@ export async function printPracticePlan(plan: PracticePlan) {
     </head>
     <body>
       <h1>${normalizedPlan.name}</h1>
-      <div class="info-line">${format(practiceDate, 'MMM d, yyyy')} | ${normalizedPlan.duration} | ${getLocationLabel(normalizedPlan.location)}</div>
+      <div class="info-line">${infoLine}</div>
       ${normalizedPlan.equipment ? `<div class="equipment"><strong>Equipment:</strong> ${normalizedPlan.equipment}</div>` : ''}
       <h2>Drills (${allDrills.length})</h2>
       ${timelineHtml}

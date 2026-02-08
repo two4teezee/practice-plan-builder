@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS practice_plans (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
   description TEXT DEFAULT '',
+  team_name TEXT DEFAULT '',
   date DATE NOT NULL,
   duration TEXT NOT NULL,
   location JSONB DEFAULT NULL,  -- Google Places location data (placeId, formattedAddress, lat, lng)
@@ -151,6 +152,7 @@ CREATE INDEX IF NOT EXISTS idx_drills_tags ON drills USING GIN(tags);
 CREATE INDEX IF NOT EXISTS idx_practice_plans_name ON practice_plans(name);
 CREATE INDEX IF NOT EXISTS idx_practice_plans_date ON practice_plans(date);
 CREATE INDEX IF NOT EXISTS idx_practice_plans_created_at ON practice_plans(created_at);
+CREATE INDEX IF NOT EXISTS idx_practice_plans_team_name ON practice_plans(team_name);
 
 -- Function to automatically update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
