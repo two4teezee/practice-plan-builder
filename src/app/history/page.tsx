@@ -1239,7 +1239,9 @@ export default function HistoryPage() {
               </div>
               <div>
                 <p className="text-sm text-gray-500 dark:text-gray-400">Location</p>
-                <p className="font-medium text-gray-900 dark:text-white">{selectedPlan.location}</p>
+                <p className="font-medium text-gray-900 dark:text-white">
+                  {getLocationLabel(selectedPlan.location)}
+                </p>
               </div>
             </div>
 
