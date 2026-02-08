@@ -507,6 +507,33 @@ export async function deletePracticePlan(id: string): Promise<void> {
 }
 
 // ============================================
+// Feedback Operations
+// ============================================
+
+export async function createFeedback(
+  message: string,
+  options?: { fullName?: string; userId?: string }
+): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    console.warn('Supabase not configured, skipping feedback insert');
+    return;
+  }
+
+  const { error } = await supabase
+    .from('feedback')
+    .insert({
+      message,
+      full_name: options?.fullName || '',
+      user_id: options?.userId || null,
+    });
+
+  if (error) {
+    console.error('Error creating feedback:', error);
+    throw error;
+  }
+}
+
+// ============================================
 // Helper Functions
 // ============================================
 

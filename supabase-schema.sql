@@ -122,6 +122,18 @@ CREATE TABLE IF NOT EXISTS practice_plans (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ============================================
+-- Feedback table
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS feedback (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+  full_name TEXT DEFAULT '',
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Migration: Convert location from TEXT to JSONB (for existing databases)
 -- Run these commands if upgrading from an older schema:
 -- ALTER TABLE practice_plans ALTER COLUMN location TYPE JSONB USING NULL;
@@ -169,6 +181,7 @@ CREATE TRIGGER update_practice_plans_updated_at
 
 ALTER TABLE drills ENABLE ROW LEVEL SECURITY;
 ALTER TABLE practice_plans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
 
 -- Helper function to check if current user is approved
 CREATE OR REPLACE FUNCTION is_approved_user()
@@ -234,6 +247,19 @@ CREATE POLICY "Approved users can update practice_plans" ON practice_plans
 DROP POLICY IF EXISTS "Approved users can delete practice_plans" ON practice_plans;
 CREATE POLICY "Approved users can delete practice_plans" ON practice_plans
   FOR DELETE
+  USING (is_approved_user());
+
+-- Feedback policies: only approved users can insert/select
+DROP POLICY IF EXISTS "Allow all operations on feedback" ON feedback;
+
+DROP POLICY IF EXISTS "Approved users can insert feedback" ON feedback;
+CREATE POLICY "Approved users can insert feedback" ON feedback
+  FOR INSERT
+  WITH CHECK (is_approved_user());
+
+DROP POLICY IF EXISTS "Approved users can select feedback" ON feedback;
+CREATE POLICY "Approved users can select feedback" ON feedback
+  FOR SELECT
   USING (is_approved_user());
 
 -- ============================================
