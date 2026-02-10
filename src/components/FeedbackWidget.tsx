@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { MessageSquare, Send, X } from 'lucide-react';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 import { createFeedback } from '@/lib/db';
 import { useAuth } from '@/components/AuthProvider';
 import { Button } from '@/components/ui/Button';
@@ -89,7 +90,14 @@ export function FeedbackWidget({ isOpen, onClose }: FeedbackWidgetProps) {
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 Share a feature request or bug report.
               </p>
+              <div className="flex items-center gap-1.5">
+                <label htmlFor="feedback-message" className="text-xs font-medium text-gray-600 dark:text-gray-300">
+                  Message
+                </label>
+                <HelpTooltip text="Share a feature request or bug report." iconClassName="w-3 h-3" />
+              </div>
               <textarea
+                id="feedback-message"
                 value={message}
                 onChange={(event) => setMessage(event.target.value)}
                 placeholder="Type your feedback..."

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, FormEvent } from 'react';
+import { useState } from 'react';
+import type { FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/components/AuthProvider';
@@ -81,6 +82,7 @@ export default function LoginPage() {
             id="email"
             type="email"
             label="Email"
+            helpText="coach@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="coach@example.com"
@@ -92,6 +94,7 @@ export default function LoginPage() {
             id="password"
             type="password"
             label="Password"
+            helpText="Enter your password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Enter your password"

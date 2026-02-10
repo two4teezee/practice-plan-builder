@@ -11,6 +11,7 @@ import { DrillForm } from '@/components/drills/DrillForm';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 import { Plus, Search, Library, Save, Filter, X, Check, ChevronDown, LayoutGrid, Rows, ArrowUpDown } from 'lucide-react';
 import { LAYOUT_STYLES } from '@/lib/layoutConfig';
 
@@ -500,9 +501,12 @@ export default function DrillsPage() {
 
                   {/* Category Filter */}
                   <div className="mb-4">
-                    <label htmlFor="filter-category" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                      Category
-                    </label>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <label htmlFor="filter-category" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Category
+                      </label>
+                      <HelpTooltip text="Category" iconClassName="w-3 h-3" />
+                    </div>
                     <select
                       id="filter-category"
                       value={isAllCategoriesSelected ? 'all' : Array.from(selectedCategories)[0] || 'all'}
@@ -526,9 +530,12 @@ export default function DrillsPage() {
 
                   {/* Tags Filter */}
                   <div className="mb-4">
-                    <label htmlFor="filter-tags" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                      Tags
-                    </label>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <label htmlFor="filter-tags" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Tags
+                      </label>
+                      <HelpTooltip text="Tags" iconClassName="w-3 h-3" />
+                    </div>
                     {/* Selected tags pills */}
                     {selectedTags.size > 0 && (
                       <div className="flex flex-wrap gap-1 mb-2">
@@ -812,12 +819,15 @@ export default function DrillsPage() {
             </Button>
             
             <div className="border-t border-gray-200 dark:border-gray-700 pt-3">
-              <label 
-                htmlFor="newDrillName" 
-                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-              >
-                Or save with a different name:
-              </label>
+              <div className="flex items-center gap-1.5 mb-2">
+                <label 
+                  htmlFor="newDrillName" 
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Or save with a different name:
+                </label>
+                <HelpTooltip text="Enter new name" iconClassName="w-3.5 h-3.5" />
+              </div>
               <Input
                 id="newDrillName"
                 type="text"

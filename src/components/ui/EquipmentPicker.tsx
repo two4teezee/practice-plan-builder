@@ -3,11 +3,12 @@
 import { useState, useEffect } from 'react';
 import { 
   EQUIPMENT_OPTIONS, 
-  EquipmentSelection, 
   equipmentSelectionsToString,
   parseEquipmentString 
 } from '@/lib/types';
+import type { EquipmentSelection } from '@/lib/types';
 import { Plus, Minus } from 'lucide-react';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 
 interface EquipmentPickerProps {
   value: string;
@@ -15,9 +16,10 @@ interface EquipmentPickerProps {
   label?: string;
   compact?: boolean;
   hideSummary?: boolean;
+  helpText?: string;
 }
 
-export function EquipmentPicker({ value, onChange, label, compact = false, hideSummary = false }: EquipmentPickerProps) {
+export function EquipmentPicker({ value, onChange, label, compact = false, hideSummary = false, helpText }: EquipmentPickerProps) {
   const [selections, setSelections] = useState<Map<string, number>>(new Map());
 
   // Initialize from value string
@@ -58,8 +60,11 @@ export function EquipmentPicker({ value, onChange, label, compact = false, hideS
   return (
     <div className="w-full">
       {label && (
-        <div className={`block font-medium text-gray-700 dark:text-gray-300 ${labelClasses}`}>
-          {label}
+        <div className={`flex items-center gap-1.5 ${labelClasses}`}>
+          <div className="block font-medium text-gray-700 dark:text-gray-300">
+            {label}
+          </div>
+          <HelpTooltip text="Select the equipment you will be using for the drill. Practice plans will automatically track the equipment used for each drill and provide a summary of the equipment necessary to run the practice." iconClassName={compact ? 'w-3 h-3' : 'w-3.5 h-3.5'} />
         </div>
       )}
       

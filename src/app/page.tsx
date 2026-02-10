@@ -42,6 +42,7 @@ import { DrillsList } from '@/components/practice/DrillsList';
 import { DrillPicker } from '@/components/practice/DrillPicker';
 import { PracticeTimeline } from '@/components/practice/PracticeTimeline';
 import { LocationPicker } from '@/components/ui/LocationPicker';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 import { 
   ClipboardList, 
   Save, 
@@ -660,13 +661,16 @@ export default function CreatePracticePlanPage() {
             
             <div className="flex flex-col" style={S.detailsFieldSpacing}>
               <div>
-                <label 
-                  htmlFor="name" 
-                  className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
-                  style={S.detailsLabel}
-                >
-                  Practice Name
-                </label>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <label 
+                    htmlFor="name" 
+                    className="block font-medium text-gray-700 dark:text-gray-300"
+                    style={S.detailsLabel}
+                  >
+                    Practice Name
+                  </label>
+                  <HelpTooltip text="Enter practice name" iconClassName="w-3 h-3" />
+                </div>
                 <input
                   id="name"
                   type="text"
@@ -679,13 +683,16 @@ export default function CreatePracticePlanPage() {
               </div>
 
               <div className="relative">
-                <label 
-                  htmlFor="teamName" 
-                  className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
-                  style={S.detailsLabel}
-                >
-                  Team Name
-                </label>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <label 
+                    htmlFor="teamName" 
+                    className="block font-medium text-gray-700 dark:text-gray-300"
+                    style={S.detailsLabel}
+                  >
+                    Team Name
+                  </label>
+                  <HelpTooltip text="Enter team name" iconClassName="w-3 h-3" />
+                </div>
                 <input
                   id="teamName"
                   type="text"
@@ -721,13 +728,16 @@ export default function CreatePracticePlanPage() {
 
               <div className="grid grid-cols-2" style={S.formRowGap}>
                 <div>
-                  <label 
-                    htmlFor="date" 
-                    className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
-                    style={S.detailsLabel}
-                  >
-                    Date
-                  </label>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <label 
+                      htmlFor="date" 
+                      className="block font-medium text-gray-700 dark:text-gray-300"
+                      style={S.detailsLabel}
+                    >
+                      Date
+                    </label>
+                    <HelpTooltip text="Date" iconClassName="w-3 h-3" />
+                  </div>
                   <input
                     id="date"
                     type="date"
@@ -739,13 +749,16 @@ export default function CreatePracticePlanPage() {
                 </div>
 
                 <div>
-                  <label 
-                    htmlFor="duration" 
-                    className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
-                    style={S.detailsLabel}
-                  >
-                    Duration
-                  </label>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <label 
+                      htmlFor="duration" 
+                      className="block font-medium text-gray-700 dark:text-gray-300"
+                      style={S.detailsLabel}
+                    >
+                      Duration
+                    </label>
+                    <HelpTooltip text="Duration" iconClassName="w-3 h-3" />
+                  </div>
                   <select
                     id="duration"
                     value={formData.duration}
@@ -766,19 +779,23 @@ export default function CreatePracticePlanPage() {
                   value={formData.location}
                   onChange={(location) => setFormData({ ...formData, location })}
                   placeholder="Search for a location..."
+                  helpText="Search for a location..."
                   compact
                   style={S.detailsInput}
                 />
               </div>
 
               <div>
-                <label 
-                  htmlFor="notes" 
-                  className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
-                  style={S.detailsLabel}
-                >
-                  Notes
-                </label>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <label 
+                    htmlFor="notes" 
+                    className="block font-medium text-gray-700 dark:text-gray-300"
+                    style={S.detailsLabel}
+                  >
+                    Notes
+                  </label>
+                  <HelpTooltip text="Additional notes..." iconClassName="w-3 h-3" />
+                </div>
                 <textarea
                   id="notes"
                   value={formData.notes}
@@ -1127,12 +1144,15 @@ export default function CreatePracticePlanPage() {
             </Button>
             
             <div className="border-t border-gray-200 dark:border-gray-700 pt-3">
-              <label 
-                htmlFor="newPlanName" 
-                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-              >
-                Or save as a new plan with a different name:
-              </label>
+              <div className="flex items-center gap-1.5 mb-2">
+                <label 
+                  htmlFor="newPlanName" 
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Or save as a new plan with a different name:
+                </label>
+                <HelpTooltip text="Enter new name" iconClassName="w-3.5 h-3.5" />
+              </div>
               <input
                 id="newPlanName"
                 type="text"

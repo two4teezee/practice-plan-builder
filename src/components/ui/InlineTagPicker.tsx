@@ -4,15 +4,17 @@ import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { DRILL_TAG_CATEGORIES, DRILL_TAG_CATEGORY_NAMES, TAG_CATEGORY_COLORS, getTagColor } from '@/lib/types';
 import type { DrillTagCategory } from '@/lib/types';
 import { X, Search, Check, ChevronLeft, ChevronRight } from 'lucide-react';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 
 interface InlineTagPickerProps {
   value: string[];
   onChange: (value: string[]) => void;
   label?: string;
   maxHeight?: string;
+  helpText?: string;
 }
 
-export function InlineTagPicker({ value, onChange, label, maxHeight = '160px' }: InlineTagPickerProps) {
+export function InlineTagPicker({ value, onChange, label, maxHeight = '160px', helpText }: InlineTagPickerProps) {
   const [activeCategory, setActiveCategory] = useState<DrillTagCategory>(DRILL_TAG_CATEGORY_NAMES[0]);
   const [searchQuery, setSearchQuery] = useState('');
   const [focusedTagIndex, setFocusedTagIndex] = useState(-1);
@@ -168,8 +170,11 @@ export function InlineTagPicker({ value, onChange, label, maxHeight = '160px' }:
   return (
     <div className="w-full">
       {label && (
-        <div className="block font-medium text-gray-700 dark:text-gray-300 text-[11px] mb-1">
-          {label}
+        <div className="flex items-center gap-1.5 text-[11px] mb-1">
+          <div className="block font-medium text-gray-700 dark:text-gray-300">
+            {label}
+          </div>
+          <HelpTooltip text="Select tags to categorize the drill. Tags can be used to filter drills in the practice picker." iconClassName="w-3 h-3" />
         </div>
       )}
 
