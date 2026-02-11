@@ -5,6 +5,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { PracticePlanDrill, DRILL_DURATIONS, getEffectiveDuration } from '@/lib/types';
 import { GripVertical, X, Clock, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 import { useState } from 'react';
 
 interface SortableDrillItemProps {
@@ -103,6 +104,7 @@ export function SortableDrillItem({ item, onRemove, onUpdateDuration, onViewDeta
               <option key={d} value={d}>{d}</option>
             ))}
           </select>
+          <HelpTooltip text="Set duration for this drill" iconClassName="w-3.5 h-3.5" />
           {isCustomDuration && (
             <span className="text-xs text-primary-600 dark:text-primary-400" title={`Default: ${item.drill.duration}`}>
               *

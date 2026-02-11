@@ -7,6 +7,7 @@ import { DrillSketchModal } from '@/components/drills/DrillSketchModal';
 import type { Drill, DrillItem } from '@/lib/types';
 import { getEffectiveDrill, hasDrillOverrides, getOverriddenFields } from '@/lib/types';
 import { Save, X, RotateCcw, Pencil, AlertCircle } from 'lucide-react';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 
 interface PracticeDrillEditModalProps {
   isOpen: boolean;
@@ -105,24 +106,32 @@ export function PracticeDrillEditModal({
   const FieldWrapper = ({ 
     field, 
     label, 
+    helpText,
     children 
   }: { 
     field: keyof Drill; 
     label: string; 
+    helpText?: string;
     children: React.ReactNode;
   }) => {
     const modified = isFieldModified(field);
+    const resolvedHelpText = helpText ?? label;
     return (
       <div className="relative">
         <div className="flex items-center justify-between mb-1">
-          <span className="block font-medium text-gray-700 dark:text-gray-300" style={labelStyle}>
-            {label}
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="block font-medium text-gray-700 dark:text-gray-300" style={labelStyle}>
+              {label}
+            </span>
+            {resolvedHelpText && (
+              <HelpTooltip text={resolvedHelpText} iconClassName="w-3 h-3" />
+            )}
             {modified && (
-              <span className="ml-1.5 text-amber-600 dark:text-amber-400 text-[10px]">
+              <span className="ml-1 text-amber-600 dark:text-amber-400 text-[10px]">
                 (modified)
               </span>
             )}
-          </span>
+          </div>
           {modified && (
             <button
               type="button"
@@ -162,7 +171,7 @@ export function PracticeDrillEditModal({
         <div className="grid grid-cols-2 gap-4">
           {/* Left column: Text fields */}
           <div className="flex flex-col gap-3">
-            <FieldWrapper field="setup" label="Setup">
+            <FieldWrapper field="setup" label="Setup" helpText="How to set up the drill">
               <textarea
                 value={effectiveDrill.setup}
                 onChange={(e) => updateField('setup', e.target.value)}
@@ -173,7 +182,7 @@ export function PracticeDrillEditModal({
               />
             </FieldWrapper>
 
-            <FieldWrapper field="coachingPoints" label="Coaching Points">
+            <FieldWrapper field="coachingPoints" label="Coaching Points" helpText="Key points for coaches">
               <textarea
                 value={effectiveDrill.coachingPoints}
                 onChange={(e) => updateField('coachingPoints', e.target.value)}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import Image from 'next/image';
 import { format } from 'date-fns';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
@@ -12,6 +12,7 @@ import {
   getDrillByName,
   ensurePlanHasTimeline,
 } from '@/lib/db';
+import { exportPracticePlanToPDF } from '@/lib/export';
 import type { 
   PracticePlan, 
   PracticePlanDrill, 
@@ -23,6 +24,9 @@ import type {
 import type { TimelineItem } from '@/lib/types';
 import {
   PRACTICE_DURATIONS, 
+  DRILL_TAG_CATEGORIES,
+  DRILL_TAG_CATEGORY_NAMES,
+  getTagColor,
   parsePracticeDurationToSeconds,
   parseEquipmentString,
   equipmentSelectionsToString,
@@ -38,10 +42,12 @@ import {
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
+import { Input } from '@/components/ui/Input';
 import { DrillsList } from '@/components/practice/DrillsList';
 import { DrillPicker } from '@/components/practice/DrillPicker';
 import { PracticeTimeline } from '@/components/practice/PracticeTimeline';
 import { LocationPicker } from '@/components/ui/LocationPicker';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 import { 
   ClipboardList, 
   Save, 
@@ -52,11 +58,36 @@ import {
   GitBranch,
   FolderOpen,
   Calendar,
-  MapPin
+  MapPin,
+  Search,
+  Filter,
+  ArrowUpDown,
+  Check,
+  X
 } from 'lucide-react';
 import { LAYOUT_CONFIG, LAYOUT_STYLES, px } from '@/lib/layoutConfig';
 
 const DRAFT_STORAGE_KEY = 'practice-plan-draft';
+const LOAD_SORT_OPTIONS = [
+  { value: 'name-asc', label: 'Name (A-Z)' },
+  { value: 'name-desc', label: 'Name (Z-A)' },
+  { value: 'date-desc', label: 'Date (Newest)' },
+  { value: 'date-asc', label: 'Date (Oldest)' },
+  { value: 'updated-desc', label: 'Recently Updated' },
+  { value: 'drills-desc', label: 'Most Drills' },
+  { value: 'drills-asc', label: 'Least Drills' },
+] as const;
+const LOAD_DATE_RANGE_OPTIONS = [
+  { value: 'all', label: 'All Dates' },
+  { value: 'last-30', label: 'Last 30 Days' },
+  { value: 'last-90', label: 'Last 90 Days' },
+  { value: 'season', label: 'This Season' },
+] as const;
+const LOAD_GROUP_FILTER_OPTIONS = [
+  { value: 'all', label: 'All Plans' },
+  { value: 'with-groups', label: 'With Groups' },
+  { value: 'no-groups', label: 'Without Groups' },
+] as const;
 
 interface DraftData {
   formData: {
@@ -88,12 +119,18 @@ const getLocationLabel = (location: PracticePlan['location']) => {
   return location.name || location.formattedAddress || '';
 };
 
+const getPlanDate = (plan: PracticePlan) => {
+  return plan.date instanceof Date ? plan.date : new Date(plan.date);
+};
+
 export default function CreatePracticePlanPage() {
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveAndExportSuccess, setSaveAndExportSuccess] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [shouldExportAfterSave, setShouldExportAfterSave] = useState(false);
   
   // Duplicate name modal state
   const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
@@ -114,6 +151,23 @@ export default function CreatePracticePlanPage() {
   // Saved practice plans state
   const [savedPlans, setSavedPlans] = useState<PracticePlan[]>([]);
   const [isLoadingPlans, setIsLoadingPlans] = useState(false);
+  const [loadSearchQuery, setLoadSearchQuery] = useState('');
+  const [loadDateRange, setLoadDateRange] = useState<typeof LOAD_DATE_RANGE_OPTIONS[number]['value']>('all');
+  const [loadSelectedDurations, setLoadSelectedDurations] = useState<Set<string>>(new Set());
+  const [loadSelectedTags, setLoadSelectedTags] = useState<Set<string>>(new Set());
+  const [loadTagSearchQuery, setLoadTagSearchQuery] = useState('');
+  const [isLoadTagDropdownOpen, setIsLoadTagDropdownOpen] = useState(false);
+  const loadTagDropdownRef = useRef<HTMLDivElement>(null);
+  const [loadLocationQuery, setLoadLocationQuery] = useState('');
+  const [loadTeamNameQuery, setLoadTeamNameQuery] = useState('');
+  const [loadGroupFilter, setLoadGroupFilter] = useState<typeof LOAD_GROUP_FILTER_OPTIONS[number]['value']>('all');
+  const [isLoadFilterOpen, setIsLoadFilterOpen] = useState(false);
+  const loadFilterButtonRef = useRef<HTMLButtonElement>(null);
+  const loadFilterPopoverRef = useRef<HTMLDivElement>(null);
+  const [isLoadSortOpen, setIsLoadSortOpen] = useState(false);
+  const loadSortButtonRef = useRef<HTMLButtonElement>(null);
+  const loadSortPopoverRef = useRef<HTMLDivElement>(null);
+  const [loadSortBy, setLoadSortBy] = useState<typeof LOAD_SORT_OPTIONS[number]['value']>('date-desc');
 
   // Fetch saved practice plans
   const fetchSavedPlans = useCallback(async () => {
@@ -138,6 +192,53 @@ export default function CreatePracticePlanPage() {
       fetchSavedPlans();
     }
   }, [isLoadModalOpen, fetchSavedPlans]);
+
+  // Close load filter popover when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        isLoadFilterOpen &&
+        loadFilterPopoverRef.current &&
+        loadFilterButtonRef.current &&
+        !loadFilterPopoverRef.current.contains(event.target as Node) &&
+        !loadFilterButtonRef.current.contains(event.target as Node)
+      ) {
+        setIsLoadFilterOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isLoadFilterOpen]);
+
+  // Close load sort popover when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        isLoadSortOpen &&
+        loadSortPopoverRef.current &&
+        loadSortButtonRef.current &&
+        !loadSortPopoverRef.current.contains(event.target as Node) &&
+        !loadSortButtonRef.current.contains(event.target as Node)
+      ) {
+        setIsLoadSortOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isLoadSortOpen]);
+
+  // Close load tag dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (loadTagDropdownRef.current && !loadTagDropdownRef.current.contains(event.target as Node)) {
+        setIsLoadTagDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
   
   // Compute legacy drills array from timeline for backward compatibility
   const drills = useMemo(() => convertTimelineToDrills(timeline), [timeline]);
@@ -156,6 +257,182 @@ export default function CreatePracticePlanPage() {
     if (!query) return teamNameOptions;
     return teamNameOptions.filter(option => option.toLowerCase().includes(query));
   }, [formData.teamName, teamNameOptions]);
+
+  const clearLoadFilters = () => {
+    setLoadDateRange('all');
+    setLoadSelectedDurations(new Set());
+    setLoadSelectedTags(new Set());
+    setLoadLocationQuery('');
+    setLoadTeamNameQuery('');
+    setLoadGroupFilter('all');
+  };
+
+  const toggleLoadDuration = (duration: string) => {
+    const next = new Set(loadSelectedDurations);
+    if (next.has(duration)) {
+      next.delete(duration);
+    } else {
+      next.add(duration);
+    }
+    setLoadSelectedDurations(next);
+  };
+
+  const toggleLoadTag = (tag: string) => {
+    const next = new Set(loadSelectedTags);
+    if (next.has(tag)) {
+      next.delete(tag);
+    } else {
+      next.add(tag);
+    }
+    setLoadSelectedTags(next);
+  };
+
+  const removeLoadTag = (tag: string) => {
+    const next = new Set(loadSelectedTags);
+    next.delete(tag);
+    setLoadSelectedTags(next);
+  };
+
+  const isWithinLoadDateRange = useCallback((planDate: Date) => {
+    if (loadDateRange === 'all') return true;
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (loadDateRange === 'last-30') {
+      const cutoff = new Date(startOfToday);
+      cutoff.setDate(cutoff.getDate() - 30);
+      return planDate >= cutoff;
+    }
+    if (loadDateRange === 'last-90') {
+      const cutoff = new Date(startOfToday);
+      cutoff.setDate(cutoff.getDate() - 90);
+      return planDate >= cutoff;
+    }
+    // Hockey season: Aug 1 -> Jul 31
+    const seasonStartYear = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+    const seasonStart = new Date(seasonStartYear, 7, 1);
+    const seasonEnd = new Date(seasonStartYear + 1, 6, 31, 23, 59, 59, 999);
+    return planDate >= seasonStart && planDate <= seasonEnd;
+  }, [loadDateRange]);
+
+  const filteredLoadTagCategories = useMemo(() => {
+    const query = loadTagSearchQuery.toLowerCase().trim();
+    if (!query) {
+      return DRILL_TAG_CATEGORY_NAMES.map(category => ({
+        category,
+        tags: [...DRILL_TAG_CATEGORIES[category]],
+      }));
+    }
+    return DRILL_TAG_CATEGORY_NAMES
+      .map(category => ({
+        category,
+        tags: DRILL_TAG_CATEGORIES[category].filter(tag =>
+          tag.toLowerCase().includes(query)
+        ),
+      }))
+      .filter(({ tags }) => tags.length > 0);
+  }, [loadTagSearchQuery]);
+
+  const loadPlanSummaries = useMemo(() => {
+    return savedPlans.map((plan) => {
+      const timelineDrills = plan.timeline ? flattenTimelineDrills(plan.timeline) : [];
+      const allDrills = timelineDrills.length > 0 ? timelineDrills : plan.drills;
+      const drillNames = allDrills.map(d => d.drill.name);
+      const tagSet = new Set<string>();
+      for (const drill of allDrills) {
+        if (drill.drill.tags && drill.drill.tags.length > 0) {
+          for (const tag of drill.drill.tags) {
+            tagSet.add(tag);
+          }
+        }
+      }
+      const hasGroups = !!plan.timeline?.some(item => item.type === 'parallel');
+      const drillCount = timelineDrills.length || plan.drills.length;
+      return { plan, drillCount, hasGroups, planDate: getPlanDate(plan), drillNames, tagSet };
+    });
+  }, [savedPlans]);
+
+  const filteredLoadPlans = useMemo(() => {
+    const query = loadSearchQuery.trim().toLowerCase();
+    return loadPlanSummaries.filter(({ plan, drillCount, hasGroups, planDate, drillNames, tagSet }) => {
+      const locationLabel = getLocationLabel(plan.location);
+      const matchesSearch = !query || [
+        plan.name,
+        plan.description,
+        plan.notes,
+        ...drillNames,
+      ]
+        .filter(Boolean)
+        .some(value => value.toLowerCase().includes(query));
+
+      const matchesDateRange = isWithinLoadDateRange(planDate);
+      const matchesDuration = loadSelectedDurations.size === 0 || loadSelectedDurations.has(plan.duration);
+      const matchesTags = loadSelectedTags.size === 0 || Array.from(loadSelectedTags).some(tag => tagSet.has(tag));
+      const matchesLocation =
+        !loadLocationQuery.trim() ||
+        locationLabel.toLowerCase().includes(loadLocationQuery.trim().toLowerCase());
+      const matchesTeamName =
+        !loadTeamNameQuery.trim() ||
+        plan.teamName?.toLowerCase().includes(loadTeamNameQuery.trim().toLowerCase());
+      const matchesGroup =
+        loadGroupFilter === 'all' ||
+        (loadGroupFilter === 'with-groups' && hasGroups) ||
+        (loadGroupFilter === 'no-groups' && !hasGroups);
+
+      return matchesSearch && matchesDateRange && matchesDuration && matchesTags && matchesLocation && matchesTeamName && matchesGroup && drillCount >= 0;
+    });
+  }, [
+    loadPlanSummaries,
+    loadSearchQuery,
+    loadSelectedDurations,
+    loadSelectedTags,
+    loadLocationQuery,
+    loadTeamNameQuery,
+    loadGroupFilter,
+    isWithinLoadDateRange,
+  ]);
+
+  const sortedLoadPlans = useMemo(() => {
+    const plansToSort = [...filteredLoadPlans];
+    plansToSort.sort((a, b) => {
+      const getName = (p: PracticePlan) => p.name?.toLowerCase() ?? '';
+      switch (loadSortBy) {
+        case 'name-asc':
+          return getName(a.plan).localeCompare(getName(b.plan));
+        case 'name-desc':
+          return getName(b.plan).localeCompare(getName(a.plan));
+        case 'date-asc':
+          return a.planDate.getTime() - b.planDate.getTime();
+        case 'date-desc':
+          return b.planDate.getTime() - a.planDate.getTime();
+        case 'updated-desc': {
+          const aUpdated = a.plan.updatedAt ? new Date(a.plan.updatedAt).getTime() : 0;
+          const bUpdated = b.plan.updatedAt ? new Date(b.plan.updatedAt).getTime() : 0;
+          return bUpdated - aUpdated;
+        }
+        case 'drills-asc':
+          return a.drillCount - b.drillCount;
+        case 'drills-desc':
+          return b.drillCount - a.drillCount;
+        default:
+          return b.planDate.getTime() - a.planDate.getTime();
+      }
+    });
+    return plansToSort;
+  }, [filteredLoadPlans, loadSortBy]);
+
+  const hasActiveLoadFilters = loadDateRange !== 'all' ||
+    loadSelectedDurations.size > 0 ||
+    loadSelectedTags.size > 0 ||
+    loadLocationQuery.trim().length > 0 ||
+    loadTeamNameQuery.trim().length > 0 ||
+    loadGroupFilter !== 'all';
+  const activeLoadFilterCount =
+    (loadDateRange !== 'all' ? 1 : 0) +
+    (loadSelectedDurations.size > 0 ? 1 : 0) +
+    (loadSelectedTags.size > 0 ? 1 : 0) +
+    (loadLocationQuery.trim().length > 0 ? 1 : 0) +
+    (loadTeamNameQuery.trim().length > 0 ? 1 : 0) +
+    (loadGroupFilter !== 'all' ? 1 : 0);
 
   // Load draft from localStorage on mount, or add default drill if no draft
   useEffect(() => {
@@ -470,11 +747,39 @@ export default function CreatePracticePlanPage() {
     }
   }, []);
 
-  const handleSave = async () => {
+  const buildCurrentPracticePlan = useCallback((overrideName?: string): PracticePlan => {
+    const now = new Date();
+    return {
+      id: undefined,
+      name: overrideName || formData.name,
+      description: formData.description,
+      teamName: formData.teamName.trim(),
+      date: new Date(formData.date),
+      duration: formData.duration,
+      location: formData.location,
+      drills: drills,
+      timeline: timeline,
+      notes: formData.notes,
+      equipment: equipment,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }, [formData, drills, timeline, equipment]);
+
+  const exportCurrentPlan = useCallback(async (overrideName?: string) => {
+    const planForExport = buildCurrentPracticePlan(overrideName);
+    await exportPracticePlanToPDF(planForExport);
+    setSaveAndExportSuccess(true);
+    setTimeout(() => setSaveAndExportSuccess(false), 3000);
+  }, [buildCurrentPracticePlan]);
+
+  const handleSave = async (exportAfterSave = false) => {
     if (timeline.length === 0) {
       alert('Please add at least one drill to the practice plan.');
       return;
     }
+
+    setShouldExportAfterSave(exportAfterSave);
 
     // Check for existing plan with the same name
     const existingPlan = await getPracticePlanByName(formData.name);
@@ -486,11 +791,11 @@ export default function CreatePracticePlanPage() {
       return;
     }
 
-    await saveNewPlan();
+    await saveNewPlan(undefined, exportAfterSave);
   };
 
   // Save as a new plan (no duplicate check)
-  const saveNewPlan = async (overrideName?: string) => {
+  const saveNewPlan = async (overrideName?: string, exportAfterSave = false) => {
     setIsSaving(true);
     try {
       const practicePlan: Omit<PracticePlan, 'id' | 'createdAt' | 'updatedAt'> = {
@@ -507,6 +812,10 @@ export default function CreatePracticePlanPage() {
       };
 
       await createPracticePlan(practicePlan);
+
+      if (exportAfterSave) {
+        await exportCurrentPlan(overrideName);
+      }
       
       // Update the form name if we used an override name
       if (overrideName) {
@@ -517,14 +826,15 @@ export default function CreatePracticePlanPage() {
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (error) {
       console.error('Failed to save practice plan:', error);
-      alert('Failed to save practice plan. Please try again.');
+      alert(exportAfterSave ? 'Failed to save and export practice plan. Please try again.' : 'Failed to save practice plan. Please try again.');
     } finally {
       setIsSaving(false);
+      setShouldExportAfterSave(false);
     }
   };
 
   // Overwrite an existing plan
-  const overwritePlan = async (planId: string) => {
+  const overwritePlan = async (planId: string, exportAfterSave = false) => {
     setIsSaving(true);
     try {
       await updatePracticePlan(planId, {
@@ -539,14 +849,19 @@ export default function CreatePracticePlanPage() {
         notes: formData.notes,
         equipment: equipment,
       });
+
+      if (exportAfterSave) {
+        await exportCurrentPlan();
+      }
       
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (error) {
       console.error('Failed to overwrite practice plan:', error);
-      alert('Failed to overwrite practice plan. Please try again.');
+      alert(exportAfterSave ? 'Failed to overwrite and export practice plan. Please try again.' : 'Failed to overwrite practice plan. Please try again.');
     } finally {
       setIsSaving(false);
+      setShouldExportAfterSave(false);
     }
   };
 
@@ -557,7 +872,7 @@ export default function CreatePracticePlanPage() {
 
   const handleConfirmOverwritePlan = async () => {
     if (duplicatePlanId) {
-      await overwritePlan(duplicatePlanId);
+      await overwritePlan(duplicatePlanId, shouldExportAfterSave);
     }
     setShowOverwriteConfirm(false);
     setIsDuplicateModalOpen(false);
@@ -571,7 +886,7 @@ export default function CreatePracticePlanPage() {
       alert('A plan with this name already exists. Please choose a different name.');
       return;
     }
-    await saveNewPlan(newPlanName);
+    await saveNewPlan(newPlanName, shouldExportAfterSave);
     setIsDuplicateModalOpen(false);
     setDuplicatePlanId(null);
   };
@@ -642,13 +957,13 @@ export default function CreatePracticePlanPage() {
         </div>
       </div>
 
-      {/* Main Content - 5-column grid: 1 for details, 4 for drills */}
+      {/* Main Content - two-column grid (details ~23%, drills ~77%) */}
       <div 
-        className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-5"
+        className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[1.2fr_4fr]"
         style={S.columnGap}
       >
-        {/* Left Column - Practice Details (narrower: 1/5 = 20%) */}
-        <div className="xl:col-span-1 flex flex-col gap-2 min-h-0">
+        {/* Left Column - Practice Details (~23%) */}
+        <div className="flex flex-col gap-2 min-h-0">
           <Card className="flex-1 overflow-y-auto" style={S.detailsCard}>
             <h2 
               className="font-semibold text-gray-900 dark:text-white flex items-center gap-1.5"
@@ -660,13 +975,16 @@ export default function CreatePracticePlanPage() {
             
             <div className="flex flex-col" style={S.detailsFieldSpacing}>
               <div>
-                <label 
-                  htmlFor="name" 
-                  className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
-                  style={S.detailsLabel}
-                >
-                  Practice Name
-                </label>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <label 
+                    htmlFor="name" 
+                    className="block font-medium text-gray-700 dark:text-gray-300"
+                    style={S.detailsLabel}
+                  >
+                    Practice Name
+                  </label>
+                  <HelpTooltip text="Enter practice name" iconClassName="w-3 h-3" />
+                </div>
                 <input
                   id="name"
                   type="text"
@@ -679,13 +997,16 @@ export default function CreatePracticePlanPage() {
               </div>
 
               <div className="relative">
-                <label 
-                  htmlFor="teamName" 
-                  className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
-                  style={S.detailsLabel}
-                >
-                  Team Name
-                </label>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <label 
+                    htmlFor="teamName" 
+                    className="block font-medium text-gray-700 dark:text-gray-300"
+                    style={S.detailsLabel}
+                  >
+                    Team Name
+                  </label>
+                  <HelpTooltip text="Enter team name" iconClassName="w-3 h-3" />
+                </div>
                 <input
                   id="teamName"
                   type="text"
@@ -721,13 +1042,16 @@ export default function CreatePracticePlanPage() {
 
               <div className="grid grid-cols-2" style={S.formRowGap}>
                 <div>
-                  <label 
-                    htmlFor="date" 
-                    className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
-                    style={S.detailsLabel}
-                  >
-                    Date
-                  </label>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <label 
+                      htmlFor="date" 
+                      className="block font-medium text-gray-700 dark:text-gray-300"
+                      style={S.detailsLabel}
+                    >
+                      Date
+                    </label>
+                    <HelpTooltip text="Date" iconClassName="w-3 h-3" />
+                  </div>
                   <input
                     id="date"
                     type="date"
@@ -739,13 +1063,16 @@ export default function CreatePracticePlanPage() {
                 </div>
 
                 <div>
-                  <label 
-                    htmlFor="duration" 
-                    className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
-                    style={S.detailsLabel}
-                  >
-                    Duration
-                  </label>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <label 
+                      htmlFor="duration" 
+                      className="block font-medium text-gray-700 dark:text-gray-300"
+                      style={S.detailsLabel}
+                    >
+                      Duration
+                    </label>
+                    <HelpTooltip text="Duration" iconClassName="w-3 h-3" />
+                  </div>
                   <select
                     id="duration"
                     value={formData.duration}
@@ -766,19 +1093,23 @@ export default function CreatePracticePlanPage() {
                   value={formData.location}
                   onChange={(location) => setFormData({ ...formData, location })}
                   placeholder="Search for a location..."
+                  helpText="Search for a location..."
                   compact
                   style={S.detailsInput}
                 />
               </div>
 
               <div>
-                <label 
-                  htmlFor="notes" 
-                  className="block font-medium text-gray-700 dark:text-gray-300 mb-1"
-                  style={S.detailsLabel}
-                >
-                  Notes
-                </label>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <label 
+                    htmlFor="notes" 
+                    className="block font-medium text-gray-700 dark:text-gray-300"
+                    style={S.detailsLabel}
+                  >
+                    Notes
+                  </label>
+                  <HelpTooltip text="Additional notes..." iconClassName="w-3 h-3" />
+                </div>
                 <textarea
                   id="notes"
                   value={formData.notes}
@@ -827,17 +1158,27 @@ export default function CreatePracticePlanPage() {
             <Button
               size="sm"
               className="flex-1 text-xs px-2"
-              onClick={handleSave}
+              onClick={() => handleSave(false)}
               disabled={isSaving}
             >
               <Save className="w-3.5 h-3.5" />
               {isSaving ? '...' : saveSuccess ? 'Saved!' : 'Save'}
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1 text-xs px-2"
+              onClick={() => handleSave(true)}
+              disabled={isSaving}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              {isSaving ? '...' : saveAndExportSuccess ? 'Exported!' : 'Export'}
+            </Button>
           </div>
         </div>
 
-        {/* Right Column - Drills (wider: 4/5 = 80%) */}
-        <div className="xl:col-span-4 flex flex-col min-h-0">
+        {/* Right Column - Drills (~77%) */}
+        <div className="flex flex-col min-h-0">
           <Card className="flex-1 flex flex-col min-h-0" style={S.drillsCard}>
             <div className="flex-shrink-0 flex items-center justify-between" style={S.drillsHeader}>
               <div>
@@ -1039,11 +1380,318 @@ export default function CreatePracticePlanPage() {
       {/* Load Practice Plan Modal */}
       <Modal
         isOpen={isLoadModalOpen}
-        onClose={() => setIsLoadModalOpen(false)}
+        onClose={() => {
+          setIsLoadModalOpen(false);
+          setIsLoadFilterOpen(false);
+          setIsLoadSortOpen(false);
+          setIsLoadTagDropdownOpen(false);
+        }}
         title="Load Practice Plan"
         size="lg"
       >
-        <div className="max-h-[60vh] overflow-y-auto">
+        <div className="w-[42rem] max-w-full h-[68vh] flex flex-col min-h-0">
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Input
+                value={loadSearchQuery}
+                onChange={(e) => setLoadSearchQuery(e.target.value)}
+                placeholder="Search practice plans..."
+                className="pl-9 text-sm"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <button
+                  ref={loadFilterButtonRef}
+                  type="button"
+                  onClick={() => setIsLoadFilterOpen(!isLoadFilterOpen)}
+                  className={`
+                    flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm font-medium transition-all h-full
+                    ${hasActiveLoadFilters
+                      ? 'bg-primary-50 dark:bg-primary-900/20 border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300'
+                      : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                    }
+                  `}
+                >
+                  <Filter className="w-4 h-4" />
+                  {activeLoadFilterCount > 0 && (
+                    <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-primary-600 text-white">
+                      {activeLoadFilterCount}
+                    </span>
+                  )}
+                </button>
+
+                {isLoadFilterOpen && (
+                  <div
+                    ref={loadFilterPopoverRef}
+                    className="absolute right-0 top-full mt-2 w-96 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50"
+                  >
+                    <div className="p-4 max-h-[65vh] overflow-y-auto">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Filters</h3>
+                        {hasActiveLoadFilters && (
+                          <button
+                            type="button"
+                            onClick={clearLoadFilters}
+                            className="text-xs text-primary-600 dark:text-primary-400 hover:underline"
+                          >
+                            Clear all
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="mb-4">
+                        <div className="flex items-center gap-1.5 mb-2">
+                          <label htmlFor="load-filter-date-range" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                            Date Range
+                          </label>
+                          <HelpTooltip text="Date Range" iconClassName="w-3 h-3" />
+                        </div>
+                        <select
+                          id="load-filter-date-range"
+                          value={loadDateRange}
+                          onChange={(e) => setLoadDateRange(e.target.value as typeof loadDateRange)}
+                          className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm py-2 px-3 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                        >
+                          {LOAD_DATE_RANGE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="mb-4">
+                        <div className="flex items-center gap-1.5 mb-2">
+                          <p className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                            Duration
+                          </p>
+                          <HelpTooltip text="Duration" iconClassName="w-3 h-3" />
+                        </div>
+                        {loadSelectedDurations.size > 0 && (
+                          <div className="flex flex-wrap gap-1 mb-2">
+                            {Array.from(loadSelectedDurations).map(duration => (
+                              <span
+                                key={duration}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300"
+                              >
+                                {duration}
+                                <button
+                                  type="button"
+                                  onClick={() => toggleLoadDuration(duration)}
+                                  className="hover:opacity-70"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {PRACTICE_DURATIONS.map(duration => (
+                            <button
+                              key={duration}
+                              type="button"
+                              onClick={() => toggleLoadDuration(duration)}
+                              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors text-center whitespace-nowrap ${
+                                loadSelectedDurations.has(duration)
+                                  ? 'bg-primary-50 dark:bg-primary-900/20 border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300'
+                                  : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'
+                              }`}
+                            >
+                              {duration}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="mb-4">
+                        <div className="flex items-center gap-1.5 mb-2">
+                          <label htmlFor="load-filter-tags" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                            Tags
+                          </label>
+                          <HelpTooltip text="Tags" iconClassName="w-3 h-3" />
+                        </div>
+                        {loadSelectedTags.size > 0 && (
+                          <div className="flex flex-wrap gap-1 mb-2">
+                            {Array.from(loadSelectedTags).map(tag => (
+                              <span
+                                key={tag}
+                                className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs ${getTagColor(tag)}`}
+                              >
+                                {tag}
+                                <button type="button" onClick={() => removeLoadTag(tag)} className="hover:opacity-70">
+                                  <X className="w-2.5 h-2.5" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="relative" ref={loadTagDropdownRef}>
+                          <div
+                            className="flex items-center gap-2 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 cursor-pointer"
+                            onClick={() => setIsLoadTagDropdownOpen(!isLoadTagDropdownOpen)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') setIsLoadTagDropdownOpen(!isLoadTagDropdownOpen); }}
+                            role="combobox"
+                            aria-expanded={isLoadTagDropdownOpen}
+                            tabIndex={0}
+                          >
+                            <Search className="w-3.5 h-3.5 text-gray-400" />
+                            <input
+                              id="load-filter-tags"
+                              type="text"
+                              value={loadTagSearchQuery}
+                              onChange={(e) => { setLoadTagSearchQuery(e.target.value); setIsLoadTagDropdownOpen(true); }}
+                              onFocus={() => setIsLoadTagDropdownOpen(true)}
+                              placeholder={loadSelectedTags.size > 0 ? 'Add more...' : 'Search tags...'}
+                              className="flex-1 bg-transparent outline-none text-sm text-gray-900 dark:text-white placeholder-gray-400"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            <ArrowUpDown className="w-3.5 h-3.5 text-gray-400" />
+                          </div>
+                          {isLoadTagDropdownOpen && (
+                            <div className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                              {filteredLoadTagCategories.length === 0 ? (
+                                <div className="p-2 text-sm text-gray-500 text-center">No tags found</div>
+                              ) : (
+                                <div className="py-1">
+                                  {filteredLoadTagCategories.map(({ category, tags: categoryTags }) => (
+                                    <div key={category}>
+                                      <div className="sticky top-0 bg-gray-100 dark:bg-gray-800 px-3 py-1 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                                        {category}
+                                      </div>
+                                      <ul>
+                                        {categoryTags.map(tag => (
+                                          <li key={tag}>
+                                            <button
+                                              type="button"
+                                              onClick={() => { toggleLoadTag(tag); setLoadTagSearchQuery(''); }}
+                                              className={`w-full flex items-center justify-between px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-600 text-left ${
+                                                loadSelectedTags.has(tag) ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300' : 'text-gray-700 dark:text-gray-300'
+                                              }`}
+                                            >
+                                              <span>{tag}</span>
+                                              {loadSelectedTags.has(tag) && <Check className="w-3.5 h-3.5" />}
+                                            </button>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mb-4">
+                        <div className="flex items-center gap-1.5 mb-2">
+                          <label htmlFor="load-filter-location" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                            Location
+                          </label>
+                          <HelpTooltip text="Filter by location..." iconClassName="w-3 h-3" />
+                        </div>
+                        <Input
+                          id="load-filter-location"
+                          value={loadLocationQuery}
+                          onChange={(e) => setLoadLocationQuery(e.target.value)}
+                          placeholder="Filter by location..."
+                          className="text-sm"
+                        />
+                      </div>
+
+                      <div className="mb-4">
+                        <div className="flex items-center gap-1.5 mb-2">
+                          <label htmlFor="load-filter-team-name" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                            Team Name
+                          </label>
+                          <HelpTooltip text="Filter by team name..." iconClassName="w-3 h-3" />
+                        </div>
+                        <Input
+                          id="load-filter-team-name"
+                          value={loadTeamNameQuery}
+                          onChange={(e) => setLoadTeamNameQuery(e.target.value)}
+                          placeholder="Filter by team name..."
+                          className="text-sm"
+                        />
+                      </div>
+
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-2">
+                          <label htmlFor="load-filter-groups" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                            Groups
+                          </label>
+                          <HelpTooltip text="Groups" iconClassName="w-3 h-3" />
+                        </div>
+                        <select
+                          id="load-filter-groups"
+                          value={loadGroupFilter}
+                          onChange={(e) => setLoadGroupFilter(e.target.value as typeof loadGroupFilter)}
+                          className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm py-2 px-3 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                        >
+                          {LOAD_GROUP_FILTER_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="relative">
+                <button
+                  ref={loadSortButtonRef}
+                  type="button"
+                  onClick={() => setIsLoadSortOpen(!isLoadSortOpen)}
+                  className={`
+                    flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm font-medium transition-all h-full
+                    ${isLoadSortOpen
+                      ? 'bg-primary-50 dark:bg-primary-900/20 border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300'
+                      : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                    }
+                  `}
+                >
+                  <ArrowUpDown className="w-4 h-4" />
+                </button>
+
+                {isLoadSortOpen && (
+                  <div
+                    ref={loadSortPopoverRef}
+                    className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50"
+                  >
+                    <div className="py-1">
+                      {LOAD_SORT_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => {
+                            setLoadSortBy(option.value);
+                            setIsLoadSortOpen(false);
+                          }}
+                          className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-left ${
+                            loadSortBy === option.value
+                              ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+                              : 'text-gray-700 dark:text-gray-300'
+                          }`}
+                        >
+                          <span>{option.label}</span>
+                          {loadSortBy === option.value && <Check className="w-4 h-4" />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto mt-3 min-h-0">
           {isLoadingPlans ? (
             <div className="text-center py-8">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-3"></div>
@@ -1055,9 +1703,19 @@ export default function CreatePracticePlanPage() {
               <p>No saved practice plans found.</p>
               <p className="text-sm mt-1">Save a practice plan first to load it later.</p>
             </div>
+          ) : sortedLoadPlans.length === 0 ? (
+            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+              <FolderOpen className="w-12 h-12 mx-auto mb-3 opacity-50" />
+              <p>{loadSearchQuery || hasActiveLoadFilters ? 'No plans found' : 'No saved practice plans found.'}</p>
+              <p className="text-sm mt-1">
+                {loadSearchQuery || hasActiveLoadFilters
+                  ? 'Try adjusting your search or filters.'
+                  : 'Save a practice plan first to load it later.'}
+              </p>
+            </div>
           ) : (
             <div className="space-y-2">
-              {savedPlans.map((plan) => (
+              {sortedLoadPlans.map(({ plan, planDate, drillCount }) => (
                 <button
                   key={plan.id}
                   type="button"
@@ -1072,7 +1730,7 @@ export default function CreatePracticePlanPage() {
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-sm text-gray-500 dark:text-gray-400">
                         <span className="flex items-center gap-1">
                           <Calendar className="w-3.5 h-3.5" />
-                          {format(new Date(plan.date), 'MMM d, yyyy')}
+                          {format(planDate, 'MMM d, yyyy')}
                         </span>
                         <span className="flex items-center gap-1">
                           <Clock className="w-3.5 h-3.5" />
@@ -1086,7 +1744,7 @@ export default function CreatePracticePlanPage() {
                         )}
                       </div>
                       <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                        {plan.timeline?.length || plan.drills?.length || 0} drills
+                        {drillCount} drills
                         {plan.createdAt && (
                           <> · Created {format(new Date(plan.createdAt), 'MMM d, yyyy')}</>
                         )}
@@ -1097,6 +1755,7 @@ export default function CreatePracticePlanPage() {
               ))}
             </div>
           )}
+          </div>
         </div>
       </Modal>
 
@@ -1127,12 +1786,15 @@ export default function CreatePracticePlanPage() {
             </Button>
             
             <div className="border-t border-gray-200 dark:border-gray-700 pt-3">
-              <label 
-                htmlFor="newPlanName" 
-                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-              >
-                Or save as a new plan with a different name:
-              </label>
+              <div className="flex items-center gap-1.5 mb-2">
+                <label 
+                  htmlFor="newPlanName" 
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Or save as a new plan with a different name:
+                </label>
+                <HelpTooltip text="Enter new name" iconClassName="w-3.5 h-3.5" />
+              </div>
               <input
                 id="newPlanName"
                 type="text"

@@ -10,6 +10,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 import { 
   exportPracticePlanToPDF, 
   exportPracticePlanToWord, 
@@ -822,9 +823,12 @@ export default function HistoryPage() {
 
                   {/* Date Range Filter */}
                   <div className="mb-4">
-                    <label htmlFor="filter-date-range" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                      Date Range
-                    </label>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <label htmlFor="filter-date-range" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Date Range
+                      </label>
+                      <HelpTooltip text="Date Range" iconClassName="w-3 h-3" />
+                    </div>
                     <select
                       id="filter-date-range"
                       value={dateRange}
@@ -841,9 +845,12 @@ export default function HistoryPage() {
 
                   {/* Duration Filter */}
                   <div className="mb-4">
-                    <p className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                      Duration
-                    </p>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <p className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Duration
+                      </p>
+                      <HelpTooltip text="Duration" iconClassName="w-3 h-3" />
+                    </div>
                     {selectedDurations.size > 0 && (
                       <div className="flex flex-wrap gap-1 mb-2">
                         {Array.from(selectedDurations).map(duration => (
@@ -883,9 +890,12 @@ export default function HistoryPage() {
 
                   {/* Tags Filter */}
                   <div className="mb-4">
-                    <label htmlFor="filter-tags" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                      Tags
-                    </label>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <label htmlFor="filter-tags" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Tags
+                      </label>
+                      <HelpTooltip text="Tags" iconClassName="w-3 h-3" />
+                    </div>
                     {selectedTags.size > 0 && (
                       <div className="flex flex-wrap gap-1 mb-2">
                         {Array.from(selectedTags).map(tag => (
@@ -961,9 +971,12 @@ export default function HistoryPage() {
 
                   {/* Location Filter */}
                   <div className="mb-4">
-                    <label htmlFor="filter-location" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                      Location
-                    </label>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <label htmlFor="filter-location" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Location
+                      </label>
+                      <HelpTooltip text="Filter by location..." iconClassName="w-3 h-3" />
+                    </div>
                     <Input
                       id="filter-location"
                       value={locationQuery}
@@ -975,9 +988,12 @@ export default function HistoryPage() {
 
                   {/* Team Name Filter */}
                   <div className="mb-4">
-                    <label htmlFor="filter-team-name" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                      Team Name
-                    </label>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <label htmlFor="filter-team-name" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Team Name
+                      </label>
+                      <HelpTooltip text="Filter by team name..." iconClassName="w-3 h-3" />
+                    </div>
                     <Input
                       id="filter-team-name"
                       value={teamNameQuery}
@@ -989,9 +1005,12 @@ export default function HistoryPage() {
 
                   {/* Groups Filter */}
                   <div className="mb-2">
-                    <label htmlFor="filter-groups" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                      Groups
-                    </label>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <label htmlFor="filter-groups" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Groups
+                      </label>
+                      <HelpTooltip text="Groups" iconClassName="w-3 h-3" />
+                    </div>
                     <select
                       id="filter-groups"
                       value={groupFilter}

@@ -5,6 +5,7 @@ import { getDrills } from '@/lib/db';
 import { DRILL_CATEGORIES, DRILL_TAG_CATEGORIES, DRILL_TAG_CATEGORY_NAMES, getTagColor } from '@/lib/types';
 import type { Drill, DrillCategory } from '@/lib/types';
 import { Input } from '@/components/ui/Input';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Search, Plus, Clock, Filter, X, Check, ChevronDown, Eye, ArrowUpDown } from 'lucide-react';
@@ -324,9 +325,12 @@ export function DrillPicker({ onAdd, onPreview }: DrillPickerProps) {
 
                 {/* Category Filter */}
                 <div className="mb-3">
-                  <label htmlFor="picker-filter-category" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">
-                    Category
-                  </label>
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <label htmlFor="picker-filter-category" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                      Category
+                    </label>
+                    <HelpTooltip text="Category" iconClassName="w-3 h-3" />
+                  </div>
                   <select
                     id="picker-filter-category"
                     value={isAllCategoriesSelected ? 'all' : Array.from(selectedCategories)[0] || 'all'}
@@ -350,9 +354,12 @@ export function DrillPicker({ onAdd, onPreview }: DrillPickerProps) {
 
                 {/* Tags Filter */}
                 <div className="mb-3">
-                  <label htmlFor="picker-filter-tags" className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">
-                    Tags
-                  </label>
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <label htmlFor="picker-filter-tags" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                      Tags
+                    </label>
+                    <HelpTooltip text="Tags" iconClassName="w-3 h-3" />
+                  </div>
                   {/* Selected tags pills */}
                   {selectedTags.size > 0 && (
                     <div className="flex flex-wrap gap-1 mb-1.5">

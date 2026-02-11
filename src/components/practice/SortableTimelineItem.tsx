@@ -6,6 +6,7 @@ import type { TimelineItem, DrillItem, Drill } from '@/lib/types';
 import { DRILL_DURATIONS, parseVariations, getEffectiveDrill, hasDrillOverrides } from '@/lib/types';
 import { GripVertical, X, ChevronDown, ChevronUp, Clock, Layers, Pencil, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ParallelGroupEditor } from './ParallelGroupEditor';
@@ -96,7 +97,7 @@ function VariationsDropdown({
   const hasSelections = selectedCount > 0;
 
   return (
-    <div className="relative">
+    <div className="relative flex items-center gap-1">
       <button
         ref={buttonRef}
         type="button"
@@ -118,6 +119,10 @@ function VariationsDropdown({
         </span>
         <ChevronDown className={`${compact ? 'w-3 h-3' : 'w-4 h-4'} ${isOpen ? 'rotate-180' : ''} transition-transform`} />
       </button>
+      <HelpTooltip
+        text="Select variations to run"
+        iconClassName={compact ? 'w-3 h-3' : 'w-3.5 h-3.5'}
+      />
 
       {isOpen && typeof document !== 'undefined' && createPortal(
         <div 
@@ -336,6 +341,7 @@ export function SortableTimelineItem({
                   <option key={d} value={d}>{d}</option>
                 ))}
               </select>
+              <HelpTooltip text="Set duration for this drill" iconClassName="w-3 h-3" />
             </div>
 
             {/* Variations Dropdown (only if drill has variations) */}
@@ -453,6 +459,7 @@ export function SortableTimelineItem({
               <option key={d} value={d}>{d}</option>
             ))}
           </select>
+          <HelpTooltip text="Set duration for this drill" iconClassName="w-3.5 h-3.5" />
           {isCustomDuration && (
             <span className="text-xs text-primary-600 dark:text-primary-400" title={`Default: ${drillItem.drill.duration}`}>
               *

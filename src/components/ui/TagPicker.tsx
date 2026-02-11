@@ -3,15 +3,17 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { DRILL_TAG_CATEGORIES, DRILL_TAG_CATEGORY_NAMES, getTagColor } from '@/lib/types';
 import { X, Search, Check, ChevronDown } from 'lucide-react';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 
 interface TagPickerProps {
   value: string[];
   onChange: (value: string[]) => void;
   label?: string;
   compact?: boolean;
+  helpText?: string;
 }
 
-export function TagPicker({ value, onChange, label, compact = false }: TagPickerProps) {
+export function TagPicker({ value, onChange, label, compact = false, helpText }: TagPickerProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -73,12 +75,18 @@ export function TagPicker({ value, onChange, label, compact = false }: TagPicker
   };
 
   const labelClasses = compact ? 'text-[11px] mb-1' : 'text-sm mb-2';
+  const resolvedHelpText = helpText ?? label;
 
   return (
     <div className="w-full" ref={containerRef}>
       {label && (
-        <div className={`block font-medium text-gray-700 dark:text-gray-300 ${labelClasses}`}>
-          {label}
+        <div className={`flex items-center gap-1.5 ${labelClasses}`}>
+          <div className="block font-medium text-gray-700 dark:text-gray-300">
+            {label}
+          </div>
+          {resolvedHelpText && (
+            <HelpTooltip text="Select tags to categorize the drill. Tags can be used to filter drills in the practice picker. The more tags you add, the easier it will be to find the drill in the practice picker." iconClassName={compact ? 'w-3 h-3' : 'w-3.5 h-3.5'} />
+          )}
         </div>
       )}
 

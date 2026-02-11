@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { EquipmentPicker } from '@/components/ui/EquipmentPicker';
 import { InlineTagPicker } from '@/components/ui/InlineTagPicker';
 import { DrillSketchModal } from '@/components/drills/DrillSketchModal';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 import { Modal } from '@/components/ui/Modal';
 import type { Drill, SkillFocus } from '@/lib/types';
 import { DRILL_CATEGORIES, SKILL_FOCUSES, DRILL_DURATIONS } from '@/lib/types';
@@ -93,10 +94,15 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
   }, []);
 
   const addVariation = useCallback(() => {
-    if (newVariation.trim()) {
-      updateVariations([...variationsList, newVariation.trim()]);
-      setNewVariation('');
-    }
+    const trimmedVariation = newVariation.trim();
+    if (!trimmedVariation) return;
+    const updatedVariations = variationsList.length === 0
+      ? (trimmedVariation === 'No variation'
+        ? ['No variation']
+        : ['No variation', trimmedVariation])
+      : [...variationsList, trimmedVariation];
+    updateVariations(updatedVariations);
+    setNewVariation('');
   }, [newVariation, variationsList, updateVariations]);
 
   const removeVariation = useCallback((index: number) => {
@@ -263,9 +269,12 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
       {/* Name, Duration, Category row - spans full width */}
       <div className="grid grid-cols-3 gap-2">
         <div>
-          <label htmlFor="name" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Drill Name
-          </label>
+          <div className="flex items-center gap-1.5 mb-1">
+            <label htmlFor="name" className="block font-medium text-gray-700 dark:text-gray-300" style={labelStyle}>
+              Drill Name
+            </label>
+            <HelpTooltip text="Used throughout the app to identify the drill." iconClassName="w-3 h-3" />
+          </div>
           <input
             id="name"
             type="text"
@@ -278,9 +287,12 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
           />
         </div>
         <div>
-          <label htmlFor="duration" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Notional Duration
-          </label>
+          <div className="flex items-center gap-1.5 mb-1">
+            <label htmlFor="duration" className="block font-medium text-gray-700 dark:text-gray-300" style={labelStyle}>
+              Notional Duration
+            </label>
+            <HelpTooltip text="Notional Duration for the drill. The duration can be modified when adding the drill to a practice plan." iconClassName="w-3 h-3" />
+          </div>
           <select
             id="duration"
             value={formData.duration}
@@ -292,9 +304,12 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
           </select>
         </div>
         <div>
-          <label htmlFor="category" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Drill Focus
-          </label>
+          <div className="flex items-center gap-1.5 mb-1">
+            <label htmlFor="category" className="block font-medium text-gray-700 dark:text-gray-300" style={labelStyle}>
+              Drill Focus
+            </label>
+            <HelpTooltip text="Drill Focus" iconClassName="w-3 h-3" />
+          </div>
           <select
             id="category"
             value={formData.category}
@@ -312,9 +327,12 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
         {/* Column 1: Setup and Coaching Points */}
         <div className="flex flex-col gap-2">
           <div className="flex-1">
-            <label htmlFor="setup" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-              Setup
-            </label>
+            <div className="flex items-center gap-1.5 mb-1">
+              <label htmlFor="setup" className="block font-medium text-gray-700 dark:text-gray-300" style={labelStyle}>
+                Setup
+              </label>
+              <HelpTooltip text="How to set up the drill. Use normal punctuation in this field. The export function will automatically parse sentences into a bulleted list." iconClassName="w-3 h-3" />
+            </div>
             <textarea
               id="setup"
               value={formData.setup}
@@ -327,9 +345,12 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
           </div>
 
           <div className="flex-1">
-            <label htmlFor="coachingPoints" className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-              Coaching Points
-            </label>
+            <div className="flex items-center gap-1.5 mb-1">
+              <label htmlFor="coachingPoints" className="block font-medium text-gray-700 dark:text-gray-300" style={labelStyle}>
+                Coaching Points
+              </label>
+              <HelpTooltip text="Key points for coaches." iconClassName="w-3 h-3" />
+            </div>
             <textarea
               id="coachingPoints"
               value={formData.coachingPoints}
@@ -344,8 +365,11 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
 
         {/* Column 2: Variations (fixed height with scroll) */}
         <div className="flex flex-col">
-          <div className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Variations
+          <div className="flex items-center gap-1.5 mb-1">
+            <div className="block font-medium text-gray-700 dark:text-gray-300" style={labelStyle}>
+              Variations
+            </div>
+            <HelpTooltip text="Add variations to the drill by entering text and pressing Enter. Variations can be edited by clicking on the text and typing over the existing text. Variations can be selected when adding the drill to a practice plan. When adding the first variation, the tool automatically creates a 'No variation' entry." iconClassName="w-3 h-3" />
           </div>
           <div className="flex flex-col rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 overflow-hidden h-[280px]">
             {/* Variations list with fixed height scroll area */}
@@ -409,8 +433,11 @@ export function DrillForm({ drill, onSave, onCancel, onCreateNew, onDelete, isCr
 
         {/* Column 3: Sketch preview */}
         <div className="flex flex-col">
-          <div className="block font-medium text-gray-700 dark:text-gray-300 mb-1" style={labelStyle}>
-            Drill Sketch
+          <div className="flex items-center gap-1.5 mb-1">
+            <div className="block font-medium text-gray-700 dark:text-gray-300" style={labelStyle}>
+              Drill Sketch
+            </div>
+            <HelpTooltip text="Drill Sketch preview. You can access to Drill Sketch tools below." iconClassName="w-3 h-3" />
           </div>
           <div className="flex flex-col rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 overflow-hidden h-[280px]">
             {/* Sketch preview area */}

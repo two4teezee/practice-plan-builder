@@ -1132,6 +1132,81 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     ctx.stroke();
   }, []);
 
+  // Helper to generate spline points for smoother polylines
+  const getSplinePoints = useCallback((points: Point[], segmentsPerCurve: number = 16): Point[] => {
+    if (points.length <= 2) return points;
+    
+    const result: Point[] = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = i > 0 ? points[i - 1] : points[i];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = i + 2 < points.length ? points[i + 2] : p2;
+      
+      for (let t = 0; t < segmentsPerCurve; t++) {
+        const tt = t / segmentsPerCurve;
+        const tt2 = tt * tt;
+        const tt3 = tt2 * tt;
+        
+        const x = 0.5 * ((2 * p1.x) + (-p0.x + p2.x) * tt + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * tt2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * tt3);
+        const y = 0.5 * ((2 * p1.y) + (-p0.y + p2.y) * tt + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * tt2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * tt3);
+        
+        result.push({ x, y });
+      }
+    }
+    
+    result.push(points[points.length - 1]);
+    return result;
+  }, []);
+
+  const getTrimmedLineEnd = useCallback((start: Point, end: Point, trimDistance: number): Point => {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const length = Math.sqrt(dx * dx + dy * dy);
+    if (length <= trimDistance || length === 0) return start;
+    const ux = dx / length;
+    const uy = dy / length;
+    return {
+      x: end.x - ux * trimDistance,
+      y: end.y - uy * trimDistance,
+    };
+  }, []);
+
+  const trimPathPoints = useCallback((points: Point[], trimEnd: number): Point[] => {
+    if (points.length < 2 || trimEnd <= 0) return points;
+    
+    let accumulatedLength = 0;
+    let trimIndex = points.length - 1;
+    let trimT = 1;
+    
+    for (let i = points.length - 1; i > 0; i--) {
+      const dx = points[i].x - points[i - 1].x;
+      const dy = points[i].y - points[i - 1].y;
+      const segmentLength = Math.sqrt(dx * dx + dy * dy);
+      
+      if (accumulatedLength + segmentLength >= trimEnd) {
+        const remaining = trimEnd - accumulatedLength;
+        trimT = 1 - remaining / segmentLength;
+        trimIndex = i;
+        break;
+      }
+      accumulatedLength += segmentLength;
+      trimIndex = i - 1;
+    }
+    
+    if (trimIndex < 1) return [points[0]];
+    
+    const trimmedPoints = points.slice(0, trimIndex);
+    const prevPoint = points[trimIndex - 1];
+    const currPoint = points[trimIndex];
+    trimmedPoints.push({
+      x: prevPoint.x + (currPoint.x - prevPoint.x) * trimT,
+      y: prevPoint.y + (currPoint.y - prevPoint.y) * trimT,
+    });
+    
+    return trimmedPoints;
+  }, []);
+
   // Draw all strokes
   const drawStrokes = useCallback((ctx: CanvasRenderingContext2D, strokesToDraw: Stroke[], selectedId: string | null) => {
     strokesToDraw.forEach(stroke => {
@@ -1173,13 +1248,15 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       if (stroke.drawMode === 'line' && stroke.points.length === 2) {
         // Straight line mode
         if (stroke.lineType === 'squiggly') {
-          drawSquigglyLine(ctx, stroke.points[0].x, stroke.points[0].y, stroke.points[1].x, stroke.points[1].y);
+          const trimmedEnd = getTrimmedLineEnd(stroke.points[0], stroke.points[1], 12);
+          drawSquigglyLine(ctx, stroke.points[0].x, stroke.points[0].y, trimmedEnd.x, trimmedEnd.y);
         } else if (stroke.lineType === 'double') {
           drawDoublePath(ctx, stroke.points, stroke.lineWidth);
         } else {
+          const trimmedEnd = getTrimmedLineEnd(stroke.points[0], stroke.points[1], 12);
           ctx.beginPath();
           ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-          ctx.lineTo(stroke.points[1].x, stroke.points[1].y);
+          ctx.lineTo(trimmedEnd.x, trimmedEnd.y);
           ctx.stroke();
         }
       } else if (stroke.drawMode === 'curve' && stroke.points.length === 3) {
@@ -1195,27 +1272,30 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
             });
           }
           if (stroke.lineType === 'squiggly') {
-            drawSquigglyPath(ctx, curvePoints);
+            const trimmedCurvePoints = trimPathPoints(curvePoints, 12);
+            drawSquigglyPath(ctx, trimmedCurvePoints);
           } else {
             drawDoublePath(ctx, curvePoints, stroke.lineWidth);
           }
         } else {
+          const trimmedEnd = getTrimmedLineEnd(stroke.points[1], stroke.points[2], 12);
           ctx.beginPath();
           ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-          ctx.quadraticCurveTo(stroke.points[1].x, stroke.points[1].y, stroke.points[2].x, stroke.points[2].y);
+          ctx.quadraticCurveTo(stroke.points[1].x, stroke.points[1].y, trimmedEnd.x, trimmedEnd.y);
           ctx.stroke();
         }
       } else if (stroke.drawMode === 'polyline' && stroke.points.length >= 2) {
-        // Polyline mode - connected line segments
+        // Polyline mode - spline fit through points
+        const splinePoints = getSplinePoints(stroke.points);
         if (stroke.lineType === 'squiggly') {
-          drawSquigglyPath(ctx, stroke.points);
+          drawSquigglyPath(ctx, splinePoints);
         } else if (stroke.lineType === 'double') {
-          drawDoublePath(ctx, stroke.points, stroke.lineWidth);
+          drawDoublePath(ctx, splinePoints, stroke.lineWidth);
         } else {
           ctx.beginPath();
-          ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-          for (let i = 1; i < stroke.points.length; i++) {
-            ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+          ctx.moveTo(splinePoints[0].x, splinePoints[0].y);
+          for (let i = 1; i < splinePoints.length; i++) {
+            ctx.lineTo(splinePoints[i].x, splinePoints[i].y);
           }
           ctx.stroke();
         }
@@ -1255,6 +1335,12 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         };
         arrowAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
         arrowEndPoint = p2;
+      } else if (stroke.drawMode === 'polyline' && stroke.points.length >= 2) {
+        // For spline polylines, use the spline for end direction
+        const splinePoints = getSplinePoints(stroke.points);
+        const result = getAverageEndDirection(splinePoints);
+        arrowAngle = result.angle;
+        arrowEndPoint = result.endPoint;
       } else {
         // For all other modes, use average direction from last ~30px
         const result = getAverageEndDirection(stroke.points);
@@ -1269,7 +1355,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         drawArrowheadAtAngle(ctx, arrowEndPoint, arrowAngle, stroke.color);
       }
     });
-  }, [drawSquigglyLine, drawSquigglyPath, drawDoublePath, getAverageEndDirection, drawArrowheadAtAngle, drawLargeArrowheadAtAngle]);
+  }, [drawSquigglyLine, drawSquigglyPath, drawDoublePath, getSplinePoints, getTrimmedLineEnd, trimPathPoints, getAverageEndDirection, drawArrowheadAtAngle, drawLargeArrowheadAtAngle]);
 
   // Helper to calculate distance from point to line segment
   const distanceToSegment = useCallback((point: Point, p1: Point, p2: Point): number => {
@@ -1301,16 +1387,20 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       const stroke = strokeList[i];
       if (stroke.points.length < 2) continue;
       
+      const pointsToTest = stroke.drawMode === 'polyline'
+        ? getSplinePoints(stroke.points)
+        : stroke.points;
+      
       // Check distance to each segment
-      for (let j = 0; j < stroke.points.length - 1; j++) {
-        const dist = distanceToSegment(point, stroke.points[j], stroke.points[j + 1]);
+      for (let j = 0; j < pointsToTest.length - 1; j++) {
+        const dist = distanceToSegment(point, pointsToTest[j], pointsToTest[j + 1]);
         if (dist <= hitThreshold) {
           return stroke.id;
         }
       }
     }
     return null;
-  }, [distanceToSegment]);
+  }, [distanceToSegment, getSplinePoints]);
 
   // Hit test for placed objects - returns object id if point is inside
   const hitTestObject = useCallback((point: Point, objects: PlacedObject[]): string | null => {
@@ -1648,13 +1738,15 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       if (drawMode === 'line' && currentStroke.length === 2) {
         // Preview straight line
         if (lineType === 'squiggly') {
-          drawSquigglyLine(ctx, currentStroke[0].x, currentStroke[0].y, currentStroke[1].x, currentStroke[1].y);
+          const trimmedEnd = getTrimmedLineEnd(currentStroke[0], currentStroke[1], 12);
+          drawSquigglyLine(ctx, currentStroke[0].x, currentStroke[0].y, trimmedEnd.x, trimmedEnd.y);
         } else if (lineType === 'double') {
           drawDoublePath(ctx, currentStroke, 3);
         } else {
+          const trimmedEnd = getTrimmedLineEnd(currentStroke[0], currentStroke[1], 12);
           ctx.beginPath();
           ctx.moveTo(currentStroke[0].x, currentStroke[0].y);
-          ctx.lineTo(currentStroke[1].x, currentStroke[1].y);
+          ctx.lineTo(trimmedEnd.x, trimmedEnd.y);
           ctx.stroke();
         }
         previewArrowEndPoint = currentStroke[1];
@@ -1677,14 +1769,16 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
               });
             }
             if (lineType === 'squiggly') {
-              drawSquigglyPath(ctx, curvePoints);
+              const trimmedCurvePoints = trimPathPoints(curvePoints, 12);
+              drawSquigglyPath(ctx, trimmedCurvePoints);
             } else {
               drawDoublePath(ctx, curvePoints, 3);
             }
           } else {
+            const trimmedEnd = getTrimmedLineEnd(currentStroke[1], currentStroke[2], 12);
             ctx.beginPath();
             ctx.moveTo(currentStroke[0].x, currentStroke[0].y);
-            ctx.quadraticCurveTo(currentStroke[1].x, currentStroke[1].y, currentStroke[2].x, currentStroke[2].y);
+            ctx.quadraticCurveTo(currentStroke[1].x, currentStroke[1].y, trimmedEnd.x, trimmedEnd.y);
             ctx.stroke();
           }
           // Calculate tangent at end of curve
@@ -1703,20 +1797,24 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         }
       } else if ((drawMode === 'polyline' || drawMode === 'freehand') && currentStroke.length > 1) {
         // Polyline or Freehand preview
+        const previewPoints = drawMode === 'polyline'
+          ? getSplinePoints(currentStroke)
+          : currentStroke;
+        
         if (lineType === 'squiggly') {
-          drawSquigglyPath(ctx, currentStroke);
+          drawSquigglyPath(ctx, previewPoints);
         } else if (lineType === 'double') {
-          drawDoublePath(ctx, currentStroke, 3);
+          drawDoublePath(ctx, previewPoints, 3);
         } else {
           ctx.beginPath();
-          ctx.moveTo(currentStroke[0].x, currentStroke[0].y);
-          for (let i = 1; i < currentStroke.length; i++) {
-            ctx.lineTo(currentStroke[i].x, currentStroke[i].y);
+          ctx.moveTo(previewPoints[0].x, previewPoints[0].y);
+          for (let i = 1; i < previewPoints.length; i++) {
+            ctx.lineTo(previewPoints[i].x, previewPoints[i].y);
           }
           ctx.stroke();
         }
         // Use average direction for arrowhead
-        const result = getAverageEndDirection(currentStroke);
+        const result = getAverageEndDirection(previewPoints);
         previewArrowAngle = result.angle;
         previewArrowEndPoint = result.endPoint;
       }
@@ -1758,7 +1856,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         ctx.fill();
       });
     }
-  }, [canvasWidth, canvasHeight, rinkView, strokes, currentStroke, lineColor, lineType, drawMode, lineStartPoint, curvePoints, polylinePoints, placedObjects, selectedObjectId, selectedStrokeId, drawRink, drawStrokes, drawPlacedObjects, drawSquigglyLine, drawSquigglyPath, drawDoublePath, getAverageEndDirection, drawArrowheadAtAngle, drawLargeArrowheadAtAngle]);
+  }, [canvasWidth, canvasHeight, rinkView, strokes, currentStroke, lineColor, lineType, drawMode, lineStartPoint, curvePoints, polylinePoints, placedObjects, selectedObjectId, selectedStrokeId, drawRink, drawStrokes, drawPlacedObjects, drawSquigglyLine, drawSquigglyPath, drawDoublePath, getSplinePoints, getTrimmedLineEnd, trimPathPoints, getAverageEndDirection, drawArrowheadAtAngle, drawLargeArrowheadAtAngle]);
 
   // Redraw when dependencies change
   useEffect(() => {
@@ -1927,25 +2025,46 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       }
     } else if (drawMode === 'polyline') {
       // Polyline mode: click to add points, double-click to finish
+      if (e.detail > 1) return;
       setPolylinePoints(prev => [...prev, point]);
     }
   };
 
-  const handleCanvasDoubleClick = () => {
-    if (drawMode === 'polyline' && polylinePoints.length >= 2) {
-      // Finish polyline on double-click
-      const newStroke: Stroke = {
-        id: `stroke-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        points: polylinePoints,
-        color: COLOR_MAP[lineColor],
-        lineType,
-        lineWidth: 3,
-        drawMode: 'polyline',
-      };
-      setStrokes(prev => [...prev, newStroke]);
-      setPolylinePoints([]);
-      setCurrentStroke([]);
-    }
+  const handleCanvasDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (drawMode !== 'polyline') return;
+    
+    const point = getCanvasCoords(e);
+    if (!point) return;
+    
+    setPolylinePoints(prev => {
+      if (prev.length === 0) return prev;
+      
+      let nextPoints = prev;
+      const lastPoint = prev[prev.length - 1];
+      const dx = lastPoint.x - point.x;
+      const dy = lastPoint.y - point.y;
+      const isDuplicate = dx * dx + dy * dy <= 4;
+      
+      if (!isDuplicate) {
+        nextPoints = [...prev, point];
+      }
+      
+      if (nextPoints.length >= 2) {
+        const newStroke: Stroke = {
+          id: `stroke-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          points: nextPoints,
+          color: COLOR_MAP[lineColor],
+          lineType,
+          lineWidth: 3,
+          drawMode: 'polyline',
+        };
+        setStrokes(strokesPrev => [...strokesPrev, newStroke]);
+      }
+      
+      return [];
+    });
+    
+    setCurrentStroke([]);
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {

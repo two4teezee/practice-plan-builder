@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { MapPin, X, Search, Loader2 } from 'lucide-react';
 import type { Location } from '@/lib/types';
 import type { PlacePrediction } from '@/app/api/places/autocomplete/route';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 
 interface LocationPickerProps {
   value: Location | null;
@@ -12,6 +13,7 @@ interface LocationPickerProps {
   placeholder?: string;
   compact?: boolean;
   style?: React.CSSProperties;
+  helpText?: string;
 }
 
 export function LocationPicker({ 
@@ -21,6 +23,7 @@ export function LocationPicker({
   placeholder = 'Search for a location...', 
   compact = false,
   style,
+  helpText,
 }: LocationPickerProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [predictions, setPredictions] = useState<PlacePrediction[]>([]);
@@ -128,7 +131,8 @@ export function LocationPicker({
     inputRef.current?.focus();
   };
 
-  const labelClasses = compact ? 'text-[11px] mb-1' : 'text-sm mb-1.5';
+  const labelClasses = compact ? 'text-[11px]' : 'text-sm';
+  const labelWrapperClasses = compact ? 'mb-1' : 'mb-1.5';
   const inputClasses = compact 
     ? 'px-2 py-1.5 text-[13px] rounded-lg'
     : 'px-3 py-2 rounded-lg';
@@ -137,12 +141,18 @@ export function LocationPicker({
   return (
     <div className="w-full" ref={containerRef}>
       {label && (
-        <label 
-          htmlFor={inputId}
-          className={`block font-medium text-gray-700 dark:text-gray-300 ${labelClasses}`}
-        >
-          {label}
-        </label>
+        <div className={`flex items-center gap-1.5 ${labelWrapperClasses}`}>
+          <label 
+            htmlFor={inputId}
+            className={`block font-medium text-gray-700 dark:text-gray-300 ${labelClasses}`}
+          >
+            {label}
+          </label>
+          <HelpTooltip
+            text="Pick a location for the practice plan. Start typing in the name of the facility you will hold the practice at and a Google Places autocomplete suggestion will be provided. Practice plans can be filtered by location."
+            iconClassName={compact ? 'w-3 h-3' : 'w-3.5 h-3.5'}
+          />
+        </div>
       )}
 
       {/* Selected location display */}

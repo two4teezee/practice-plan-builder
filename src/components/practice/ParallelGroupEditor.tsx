@@ -37,6 +37,7 @@ import {
   Check,
   X
 } from 'lucide-react';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 
 interface ParallelGroupEditorProps {
   item: ParallelSplitItem;
@@ -159,6 +160,7 @@ function GroupColumn({
                 }}
                 className={`px-1 py-0.5 border rounded dark:bg-gray-700 dark:border-gray-600 ${isNested ? 'w-16 text-xs' : 'w-20 text-sm'}`}
               />
+              <HelpTooltip text="Rename this group" iconClassName={isNested ? 'w-2.5 h-2.5' : 'w-3 h-3'} />
               <button 
                 type="button"
                 onClick={onSaveGroupName}

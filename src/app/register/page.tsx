@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, FormEvent } from 'react';
+import { useState } from 'react';
+import type { FormEvent } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/components/AuthProvider';
 import { Card } from '@/components/ui/Card';
@@ -131,6 +132,7 @@ export default function RegisterPage() {
             id="fullName"
             type="text"
             label="Full Name"
+            helpText="Coach Smith"
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
             placeholder="Coach Smith"
@@ -142,6 +144,7 @@ export default function RegisterPage() {
             id="email"
             type="email"
             label="Email"
+            helpText="coach@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="coach@example.com"
@@ -153,6 +156,7 @@ export default function RegisterPage() {
             id="password"
             type="password"
             label="Password"
+            helpText="At least 6 characters"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="At least 6 characters"
@@ -164,6 +168,7 @@ export default function RegisterPage() {
             id="confirmPassword"
             type="password"
             label="Confirm Password"
+            helpText="Confirm your password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             placeholder="Confirm your password"

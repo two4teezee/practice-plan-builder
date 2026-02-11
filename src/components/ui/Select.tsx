@@ -1,33 +1,48 @@
 'use client';
 
-import { SelectHTMLAttributes, forwardRef } from 'react';
+import { forwardRef } from 'react';
+import type { SelectHTMLAttributes } from 'react';
+import { HelpTooltip } from '@/components/ui/HelpTooltip';
 
 interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   label?: string;
   error?: string;
   options: { value: string; label: string }[];
   compact?: boolean;
+  helpText?: string;
 }
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(
-  ({ className = '', label, error, id, options, compact = false, ...props }, ref) => {
+  ({ className = '', label, error, id, options, compact = false, helpText, ...props }, ref) => {
     const sizeClasses = compact 
       ? 'px-2 py-1.5 text-[13px] rounded-lg'
       : 'px-4 py-2.5 rounded-xl';
     
-    const labelClasses = compact
-      ? 'text-[11px] mb-1'
-      : 'text-sm mb-1.5';
+    const labelTextClasses = compact
+      ? 'text-[11px]'
+      : 'text-sm';
+    const labelWrapperClasses = compact
+      ? 'mb-1'
+      : 'mb-1.5';
+    const resolvedHelpText = helpText ?? label;
 
     return (
       <div className="w-full">
         {label && (
-          <label 
-            htmlFor={id} 
-            className={`block font-medium text-gray-700 dark:text-gray-300 ${labelClasses}`}
-          >
-            {label}
-          </label>
+          <div className={`flex items-center gap-1.5 ${labelWrapperClasses}`}>
+            <label 
+              htmlFor={id} 
+              className={`block font-medium text-gray-700 dark:text-gray-300 ${labelTextClasses}`}
+            >
+              {label}
+            </label>
+            {resolvedHelpText && (
+              <HelpTooltip
+                text="Select tool tip."
+                iconClassName={compact ? 'w-3 h-3' : 'w-3.5 h-3.5'}
+              />
+            )}
+          </div>
         )}
         <select
           ref={ref}
