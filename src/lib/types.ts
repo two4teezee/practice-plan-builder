@@ -453,6 +453,7 @@ export function getTagColor(tag: string): string {
     if ((tags as readonly string[]).includes(tag)) {
       return TAG_CATEGORY_COLORS[category as DrillTagCategory];
     }
+
   }
   // Default fallback color
   return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400';

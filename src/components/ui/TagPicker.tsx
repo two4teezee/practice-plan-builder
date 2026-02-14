@@ -4,6 +4,8 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { DRILL_TAG_CATEGORIES, DRILL_TAG_CATEGORY_NAMES, getTagColor } from '@/lib/types';
 import { X, Search, Check, ChevronDown } from 'lucide-react';
 import { HelpTooltip } from '@/components/ui/HelpTooltip';
+import { createFeedback } from '@/lib/db';
+import { useAuth } from '@/components/AuthProvider';
 
 interface TagPickerProps {
   value: string[];
@@ -14,37 +16,82 @@ interface TagPickerProps {
 }
 
 export function TagPicker({ value, onChange, label, compact = false, helpText }: TagPickerProps) {
+  const { profile, user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
+  const [createdCustomTags, setCreatedCustomTags] = useState<string[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Ensure value is always an array (handles undefined from old data)
   const tags = value ?? [];
 
+  const CUSTOM_CATEGORY_LABEL = 'custom';
+
+  const knownTags = useMemo(
+    () => new Set(Object.values(DRILL_TAG_CATEGORIES).flat().map((tag) => tag.toLowerCase())),
+    []
+  );
+
+  const customTags = useMemo(() => {
+    const allCustomTags = [...createdCustomTags, ...tags.filter((tag) => !knownTags.has(tag.toLowerCase()))];
+    return Array.from(new Set(allCustomTags));
+  }, [createdCustomTags, knownTags, tags]);
+
+  useEffect(() => {
+    if (customTags.length === 0) return;
+    setCreatedCustomTags((prev) => {
+      const merged = Array.from(new Set([...prev, ...customTags]));
+      if (merged.length === prev.length && merged.every((tag, index) => tag === prev[index])) {
+        return prev;
+      }
+      return merged;
+    });
+  }, [customTags]);
+
   // Filter categories and tags based on search query
   const filteredCategories = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
+    const baseCategories = DRILL_TAG_CATEGORY_NAMES.map(category => ({
+      category,
+      tags: [...DRILL_TAG_CATEGORIES[category]],
+    }));
+
     if (!query) {
-      // Return all categories with their tags
-      return DRILL_TAG_CATEGORY_NAMES.map(category => ({
-        category,
-        tags: [...DRILL_TAG_CATEGORIES[category]],
-      }));
+      if (customTags.length > 0) {
+        return [...baseCategories, { category: CUSTOM_CATEGORY_LABEL, tags: customTags }];
+      }
+      return baseCategories;
     }
+
     // Filter tags within each category
-    return DRILL_TAG_CATEGORY_NAMES
-      .map(category => ({
-        category,
-        tags: DRILL_TAG_CATEGORIES[category].filter(tag => 
-          tag.toLowerCase().includes(query)
-        ),
+    const filtered = baseCategories
+      .map(categoryData => ({
+        ...categoryData,
+        tags: categoryData.tags.filter(tag => tag.toLowerCase().includes(query)),
       }))
       .filter(({ tags: categoryTags }) => categoryTags.length > 0);
-  }, [searchQuery]);
+
+    const matchingCustomTags = customTags.filter((tag) => tag.toLowerCase().includes(query));
+    if (matchingCustomTags.length > 0) {
+      return [...filtered, { category: CUSTOM_CATEGORY_LABEL, tags: matchingCustomTags }];
+    }
+    return filtered;
+  }, [customTags, searchQuery]);
 
   // Separate selected and unselected tags for display
   const selectedSet = useMemo(() => new Set(tags), [tags]);
+
+  const normalizedQuery = useMemo(() => searchQuery.trim().replace(/\s+/g, ' '), [searchQuery]);
+  const allAvailableTags = useMemo(
+    () => [...Object.values(DRILL_TAG_CATEGORIES).flat(), ...customTags],
+    [customTags]
+  );
+  const existingTagMatch = useMemo(
+    () => allAvailableTags.find((tag) => tag.toLowerCase() === normalizedQuery.toLowerCase()),
+    [allAvailableTags, normalizedQuery]
+  );
+  const canCreateCustomTag = normalizedQuery.length > 0 && !existingTagMatch;
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -72,6 +119,29 @@ export function TagPicker({ value, onChange, label, compact = false, helpText }:
 
   const clearAll = () => {
     onChange([]);
+  };
+
+  const createCustomTag = async () => {
+    if (!canCreateCustomTag) return;
+
+    const newTag = normalizedQuery;
+    setCreatedCustomTags((prev) => Array.from(new Set([...prev, newTag])));
+    if (!selectedSet.has(newTag)) {
+      onChange([...tags, newTag]);
+    }
+    setSearchQuery('');
+
+    try {
+      await createFeedback(
+        `Custom tag created: "${newTag}". Please assign it to an existing category or create a new category for it.`,
+        {
+          fullName: profile?.fullName || '',
+          userId: user?.id,
+        }
+      );
+    } catch (error) {
+      console.error('Failed to log custom tag feedback:', error);
+    }
   };
 
   const labelClasses = compact ? 'text-[11px] mb-1' : 'text-sm mb-2';
@@ -165,6 +235,12 @@ export function TagPicker({ value, onChange, label, compact = false, helpText }:
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && canCreateCustomTag) {
+                e.preventDefault();
+                void createCustomTag();
+              }
+            }}
             onFocus={() => setIsOpen(true)}
             placeholder={tags.length > 0 ? "Add more tags..." : "Search tags..."}
             className={`
@@ -195,11 +271,43 @@ export function TagPicker({ value, onChange, label, compact = false, helpText }:
             `}
           >
             {filteredCategories.length === 0 ? (
-              <div className={`${compact ? 'p-2 text-xs' : 'p-3 text-sm'} text-gray-500 dark:text-gray-400 text-center`}>
-                No tags found
+              <div className="py-1">
+                {canCreateCustomTag && (
+                  <button
+                    type="button"
+                    onClick={() => void createCustomTag()}
+                    className={`
+                      w-full text-left border-b border-gray-100 dark:border-gray-700
+                      ${compact ? 'px-2 py-1.5 text-xs' : 'px-3 py-2 text-sm'}
+                      text-primary-700 dark:text-primary-300
+                      hover:bg-primary-50 dark:hover:bg-primary-900/20
+                      transition-colors
+                    `}
+                  >
+                    Create custom tag &quot;{normalizedQuery}&quot;
+                  </button>
+                )}
+                <div className={`${compact ? 'p-2 text-xs' : 'p-3 text-sm'} text-gray-500 dark:text-gray-400 text-center`}>
+                  No tags found
+                </div>
               </div>
             ) : (
               <div className="py-1">
+                {canCreateCustomTag && (
+                  <button
+                    type="button"
+                    onClick={() => void createCustomTag()}
+                    className={`
+                      w-full text-left border-b border-gray-100 dark:border-gray-700
+                      ${compact ? 'px-2 py-1.5 text-xs' : 'px-3 py-2 text-sm'}
+                      text-primary-700 dark:text-primary-300
+                      hover:bg-primary-50 dark:hover:bg-primary-900/20
+                      transition-colors
+                    `}
+                  >
+                    Create custom tag &quot;{normalizedQuery}&quot;
+                  </button>
+                )}
                 {filteredCategories.map(({ category, tags: categoryTags }) => (
                   <div key={category}>
                     {/* Category header */}

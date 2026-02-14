@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
-import { Save, X, Eraser, Pencil, Minus, SplineIcon, GitBranch, MousePointer2, Trash2 } from 'lucide-react';
+import { Save, X, Eraser, Pencil, Minus, SplineIcon, GitBranch, MousePointer2, Trash2, Type } from 'lucide-react';
 
 interface DrillSketchModalProps {
   isOpen: boolean;
@@ -16,9 +16,10 @@ type RinkView = 'full' | 'half' | 'neutral' | 'quarter';
 type LineColor = 'blue' | 'red' | 'black' | 'gray';
 type LineType = 'solid' | 'dashed' | 'double' | 'squiggly';
 type DrawMode = 'freehand' | 'line' | 'curve' | 'polyline';
-type PlaceableType = 'player' | 'cone' | 'net' | 'smallNet' | 'pucks';
+type PlaceableType = 'player' | 'cone' | 'net' | 'smallNet' | 'pucks' | 'textBox';
 type PlayerColor = 'blue' | 'red' | 'black' | 'gray';
 type PlayerMarkerType = 'plain' | 'numbered' | 'F' | 'D' | 'G' | 'Fx' | 'Dx' | 'Xx' | 'Ox' | 'X' | 'O' | 'C' | 'LW' | 'RW';
+type TextBoxResizeHandle = 'nw' | 'ne' | 'sw' | 'se';
 
 interface Point {
   x: number;
@@ -45,6 +46,9 @@ interface PlacedObject {
   playerMarkerType?: PlayerMarkerType; // New: type of marker (plain, numbered, F, D, G, Fx, Dx, Xx, Ox)
   playerSequence?: number; // For auto-numbered types (numbered, Fx, Dx, Xx, Ox)
   puckOffsets?: Array<{ dx: number; dy: number }>; // Random offsets for puck pile
+  text?: string; // Text content for text box type
+  width?: number; // Width for box-based objects (text box)
+  height?: number; // Height for box-based objects (text box)
 }
 
 const COLOR_MAP: Record<LineColor, string> = {
@@ -80,6 +84,10 @@ const NET_DIMENSIONS = {
 
 const NET_ROTATION_HANDLE_OFFSET = 10;
 const NET_ROTATION_HANDLE_RADIUS = 4;
+const TEXT_BOX_MIN_WIDTH = 60;
+const TEXT_BOX_MIN_HEIGHT = 30;
+const TEXT_BOX_PADDING = 8;
+const TEXT_BOX_RESIZE_HANDLE_SIZE = 8;
 
 export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }: DrillSketchModalProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -97,6 +105,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
   // Placeable objects state
   const [placedObjects, setPlacedObjects] = useState<PlacedObject[]>([]);
   const [isPlaceMode, setIsPlaceMode] = useState(false);
+  const [isTextBoxMode, setIsTextBoxMode] = useState(false);
   const [placeableType, setPlaceableType] = useState<PlaceableType>('player');
   const [playerColor, setPlayerColor] = useState<PlayerColor>('blue');
   const [playerMarkerType, setPlayerMarkerType] = useState<PlayerMarkerType>('numbered');
@@ -112,6 +121,11 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
   const [isDraggingObject, setIsDraggingObject] = useState(false);
   const [isDraggingStroke, setIsDraggingStroke] = useState(false);
   const [isRotatingObject, setIsRotatingObject] = useState(false);
+  const [isResizingTextBox, setIsResizingTextBox] = useState(false);
+  const [textBoxResizeHandle, setTextBoxResizeHandle] = useState<TextBoxResizeHandle | null>(null);
+  const [textBoxResizeAnchor, setTextBoxResizeAnchor] = useState<Point | null>(null);
+  const [textBoxStartPoint, setTextBoxStartPoint] = useState<Point | null>(null);
+  const [textBoxDraftEndPoint, setTextBoxDraftEndPoint] = useState<Point | null>(null);
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
   const [dragStartPoint, setDragStartPoint] = useState<Point | null>(null);
   const [rotateStartAngle, setRotateStartAngle] = useState(0);
@@ -130,6 +144,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     setPolylinePoints([]);
     setPlacedObjects([]);
     setIsPlaceMode(false);
+    setIsTextBoxMode(false);
     setPlaceableType('player');
     setPlayerColor('blue');
     setPlayerMarkerType('numbered');
@@ -140,6 +155,11 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     setIsDraggingObject(false);
     setIsDraggingStroke(false);
     setIsRotatingObject(false);
+    setIsResizingTextBox(false);
+    setTextBoxResizeHandle(null);
+    setTextBoxResizeAnchor(null);
+    setTextBoxStartPoint(null);
+    setTextBoxDraftEndPoint(null);
     setDragOffset({ x: 0, y: 0 });
     setDragStartPoint(null);
     setRotateStartAngle(0);
@@ -1402,6 +1422,49 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     return null;
   }, [distanceToSegment, getSplinePoints]);
 
+  const getTextBoxBounds = useCallback((obj: PlacedObject) => {
+    const width = Math.max(obj.width || 140, TEXT_BOX_MIN_WIDTH);
+    const height = Math.max(obj.height || 60, TEXT_BOX_MIN_HEIGHT);
+    return {
+      left: obj.x - width / 2,
+      right: obj.x + width / 2,
+      top: obj.y - height / 2,
+      bottom: obj.y + height / 2,
+      width,
+      height,
+    };
+  }, []);
+
+  const getTextBoxResizeHandles = useCallback((obj: PlacedObject): Record<TextBoxResizeHandle, Point> => {
+    const bounds = getTextBoxBounds(obj);
+    return {
+      nw: { x: bounds.left, y: bounds.top },
+      ne: { x: bounds.right, y: bounds.top },
+      sw: { x: bounds.left, y: bounds.bottom },
+      se: { x: bounds.right, y: bounds.bottom },
+    };
+  }, [getTextBoxBounds]);
+
+  const hitTestTextBoxResizeHandle = useCallback((point: Point, obj: PlacedObject): TextBoxResizeHandle | null => {
+    if (obj.type !== 'textBox') return null;
+    const handles = getTextBoxResizeHandles(obj);
+    const hitRadius = TEXT_BOX_RESIZE_HANDLE_SIZE;
+    const entries: Array<[TextBoxResizeHandle, Point]> = [
+      ['nw', handles.nw],
+      ['ne', handles.ne],
+      ['sw', handles.sw],
+      ['se', handles.se],
+    ];
+    for (const [handle, handlePoint] of entries) {
+      const dx = point.x - handlePoint.x;
+      const dy = point.y - handlePoint.y;
+      if (dx * dx + dy * dy <= hitRadius * hitRadius) {
+        return handle;
+      }
+    }
+    return null;
+  }, [getTextBoxResizeHandles]);
+
   // Hit test for placed objects - returns object id if point is inside
   const hitTestObject = useCallback((point: Point, objects: PlacedObject[]): string | null => {
     // Check in reverse order (top objects first)
@@ -1427,10 +1490,15 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       } else if (obj.type === 'pucks') {
         const hitRadius = 14;
         if (dx * dx + dy * dy <= hitRadius * hitRadius) return obj.id;
+      } else if (obj.type === 'textBox') {
+        const bounds = getTextBoxBounds(obj);
+        if (point.x >= bounds.left && point.x <= bounds.right && point.y >= bounds.top && point.y <= bounds.bottom) {
+          return obj.id;
+        }
       }
     }
     return null;
-  }, []);
+  }, [getTextBoxBounds]);
 
   // Draw placed objects (players, cones, nets)
   const drawPlacedObjects = useCallback((ctx: CanvasRenderingContext2D, objects: PlacedObject[], selectedId: string | null) => {
@@ -1466,6 +1534,10 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           ctx.beginPath();
           ctx.arc(obj.x, obj.y, 18, 0, Math.PI * 2);
           ctx.stroke();
+        } else if (obj.type === 'textBox') {
+          const bounds = getTextBoxBounds(obj);
+          const padding = 4;
+          ctx.strokeRect(bounds.left - padding, bounds.top - padding, bounds.width + padding * 2, bounds.height + padding * 2);
         }
         ctx.setLineDash([]);
       }
@@ -1677,6 +1749,47 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           ctx.lineWidth = 0.5;
           ctx.stroke();
         });
+      } else if (obj.type === 'textBox') {
+        const bounds = getTextBoxBounds(obj);
+        const text = obj.text || 'Text';
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.strokeStyle = '#374151';
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(bounds.left, bounds.top, bounds.width, bounds.height);
+        ctx.strokeRect(bounds.left, bounds.top, bounds.width, bounds.height);
+
+        const innerWidth = Math.max(bounds.width - TEXT_BOX_PADDING * 2, 20);
+        const innerHeight = Math.max(bounds.height - TEXT_BOX_PADDING * 2, 16);
+        const words = text.split(/\s+/).filter(Boolean);
+        const lines = words.length > 0 ? words : ['Text'];
+        const candidateFontSize = Math.floor(Math.min(innerHeight / 1.4, innerWidth / Math.max(text.length * 0.55, 1)));
+        const fontSize = Math.max(8, Math.min(56, candidateFontSize));
+        ctx.fillStyle = '#111827';
+        ctx.font = `${fontSize}px Arial`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+
+        const wrappedLines: string[] = [];
+        let currentLine = '';
+        for (const word of lines) {
+          const testLine = currentLine ? `${currentLine} ${word}` : word;
+          if (ctx.measureText(testLine).width <= innerWidth) {
+            currentLine = testLine;
+          } else {
+            if (currentLine) wrappedLines.push(currentLine);
+            currentLine = word;
+          }
+        }
+        if (currentLine) wrappedLines.push(currentLine);
+        if (wrappedLines.length === 0) wrappedLines.push('Text');
+
+        const lineHeight = fontSize * 1.2;
+        const maxLines = Math.max(1, Math.floor(innerHeight / lineHeight));
+        const visibleLines = wrappedLines.slice(0, maxLines);
+        visibleLines.forEach((line, index) => {
+          ctx.fillText(line, bounds.left + TEXT_BOX_PADDING, bounds.top + TEXT_BOX_PADDING + index * lineHeight);
+        });
       }
       
       // Rotation handle for selected nets
@@ -1702,10 +1815,28 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         ctx.fill();
         ctx.stroke();
       }
+
+      if (isSelected && obj.type === 'textBox') {
+        const handles = getTextBoxResizeHandles(obj);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.strokeStyle = '#8B5CF6';
+        ctx.lineWidth = 1.5;
+        (Object.values(handles) as Point[]).forEach(handle => {
+          ctx.beginPath();
+          ctx.rect(
+            handle.x - TEXT_BOX_RESIZE_HANDLE_SIZE / 2,
+            handle.y - TEXT_BOX_RESIZE_HANDLE_SIZE / 2,
+            TEXT_BOX_RESIZE_HANDLE_SIZE,
+            TEXT_BOX_RESIZE_HANDLE_SIZE
+          );
+          ctx.fill();
+          ctx.stroke();
+        });
+      }
       
       ctx.restore();
     });
-  }, []);
+  }, [getTextBoxBounds, getTextBoxResizeHandles]);
 
   // Redraw canvas
   const redrawCanvas = useCallback(() => {
@@ -1830,6 +1961,21 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         }
       }
     }
+
+    if (isTextBoxMode && textBoxStartPoint && textBoxDraftEndPoint) {
+      const left = Math.min(textBoxStartPoint.x, textBoxDraftEndPoint.x);
+      const top = Math.min(textBoxStartPoint.y, textBoxDraftEndPoint.y);
+      const width = Math.abs(textBoxDraftEndPoint.x - textBoxStartPoint.x);
+      const height = Math.abs(textBoxDraftEndPoint.y - textBoxStartPoint.y);
+      ctx.save();
+      ctx.strokeStyle = '#8B5CF6';
+      ctx.fillStyle = 'rgba(139, 92, 246, 0.12)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.fillRect(left, top, width, height);
+      ctx.strokeRect(left, top, width, height);
+      ctx.restore();
+    }
     
     // Draw point markers for line/curve/polyline modes
     if (drawMode === 'line' && lineStartPoint) {
@@ -1856,7 +2002,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
         ctx.fill();
       });
     }
-  }, [canvasWidth, canvasHeight, rinkView, strokes, currentStroke, lineColor, lineType, drawMode, lineStartPoint, curvePoints, polylinePoints, placedObjects, selectedObjectId, selectedStrokeId, drawRink, drawStrokes, drawPlacedObjects, drawSquigglyLine, drawSquigglyPath, drawDoublePath, getSplinePoints, getTrimmedLineEnd, trimPathPoints, getAverageEndDirection, drawArrowheadAtAngle, drawLargeArrowheadAtAngle]);
+  }, [canvasWidth, canvasHeight, rinkView, strokes, currentStroke, lineColor, lineType, drawMode, lineStartPoint, curvePoints, polylinePoints, placedObjects, selectedObjectId, selectedStrokeId, isTextBoxMode, textBoxStartPoint, textBoxDraftEndPoint, drawRink, drawStrokes, drawPlacedObjects, drawSquigglyLine, drawSquigglyPath, drawDoublePath, getSplinePoints, getTrimmedLineEnd, trimPathPoints, getAverageEndDirection, drawArrowheadAtAngle, drawLargeArrowheadAtAngle]);
 
   // Redraw when dependencies change
   useEffect(() => {
@@ -1925,6 +2071,10 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     // Handle select mode - don't do anything else when in select mode
     // (handleMouseDown already handles selection and dragging)
     if (isSelectMode) {
+      return;
+    }
+
+    if (isTextBoxMode) {
       return;
     }
     
@@ -2075,6 +2225,23 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     if (isSelectMode) {
       if (selectedObjectId) {
         const selectedObj = placedObjects.find(o => o.id === selectedObjectId);
+        if (selectedObj?.type === 'textBox') {
+          const hitHandle = hitTestTextBoxResizeHandle(point, selectedObj);
+          if (hitHandle) {
+            const bounds = getTextBoxBounds(selectedObj);
+            const anchorByHandle: Record<TextBoxResizeHandle, Point> = {
+              nw: { x: bounds.right, y: bounds.bottom },
+              ne: { x: bounds.left, y: bounds.bottom },
+              sw: { x: bounds.right, y: bounds.top },
+              se: { x: bounds.left, y: bounds.top },
+            };
+            setTextBoxResizeHandle(hitHandle);
+            setTextBoxResizeAnchor(anchorByHandle[hitHandle]);
+            setIsResizingTextBox(true);
+            setIsDraggingObject(false);
+            return;
+          }
+        }
         if (selectedObj && (selectedObj.type === 'net' || selectedObj.type === 'smallNet')) {
           const { height } = NET_DIMENSIONS[selectedObj.type];
           const rotation = selectedObj.rotation || 0;
@@ -2123,6 +2290,12 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       setSelectedStrokeId(null);
       return;
     }
+
+    if (isTextBoxMode) {
+      setTextBoxStartPoint(point);
+      setTextBoxDraftEndPoint(point);
+      return;
+    }
     
     if (drawMode !== 'freehand') return;
     
@@ -2133,6 +2306,11 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const point = getCanvasCoords(e);
     if (!point) return;
+
+    if (isTextBoxMode && textBoxStartPoint) {
+      setTextBoxDraftEndPoint(point);
+      return;
+    }
     
     // Handle rotating object in select mode
     if (isSelectMode && isRotatingObject && selectedObjectId) {
@@ -2151,6 +2329,26 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
           ? { ...obj, x: point.x - dragOffset.x, y: point.y - dragOffset.y }
           : obj
       ));
+      return;
+    }
+
+    if (isSelectMode && isResizingTextBox && selectedObjectId && textBoxResizeHandle && textBoxResizeAnchor) {
+      const minWidth = TEXT_BOX_MIN_WIDTH;
+      const minHeight = TEXT_BOX_MIN_HEIGHT;
+      const signX = textBoxResizeHandle === 'nw' || textBoxResizeHandle === 'sw' ? -1 : 1;
+      const signY = textBoxResizeHandle === 'nw' || textBoxResizeHandle === 'ne' ? -1 : 1;
+      const width = Math.max(Math.abs(point.x - textBoxResizeAnchor.x), minWidth);
+      const height = Math.max(Math.abs(point.y - textBoxResizeAnchor.y), minHeight);
+      const halfWidth = width / 2;
+      const halfHeight = height / 2;
+      const centerX = textBoxResizeAnchor.x + signX * halfWidth;
+      const centerY = textBoxResizeAnchor.y + signY * halfHeight;
+
+      setPlacedObjects(prev => prev.map(obj => (
+        obj.id === selectedObjectId && obj.type === 'textBox'
+          ? { ...obj, x: centerX, y: centerY, width, height }
+          : obj
+      )));
       return;
     }
     
@@ -2192,6 +2390,13 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       setIsDraggingObject(false);
       return;
     }
+
+    if (isSelectMode && isResizingTextBox) {
+      setIsResizingTextBox(false);
+      setTextBoxResizeHandle(null);
+      setTextBoxResizeAnchor(null);
+      return;
+    }
     
     // Handle end of stroke drag in select mode
     if (isSelectMode && isDraggingStroke) {
@@ -2200,6 +2405,35 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
       return;
     }
     
+    if (isTextBoxMode) {
+      if (textBoxStartPoint && textBoxDraftEndPoint) {
+        const left = Math.min(textBoxStartPoint.x, textBoxDraftEndPoint.x);
+        const right = Math.max(textBoxStartPoint.x, textBoxDraftEndPoint.x);
+        const top = Math.min(textBoxStartPoint.y, textBoxDraftEndPoint.y);
+        const bottom = Math.max(textBoxStartPoint.y, textBoxDraftEndPoint.y);
+        const width = Math.max(right - left, TEXT_BOX_MIN_WIDTH);
+        const height = Math.max(bottom - top, TEXT_BOX_MIN_HEIGHT);
+        const textValue = window.prompt('Enter text for this text box:', 'Text');
+        if (textValue !== null) {
+          const newTextBox: PlacedObject = {
+            id: `obj-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            type: 'textBox',
+            x: left + width / 2,
+            y: top + height / 2,
+            width,
+            height,
+            text: textValue.trim() || 'Text',
+          };
+          setPlacedObjects(prev => [...prev, newTextBox]);
+          setSelectedObjectId(newTextBox.id);
+          setSelectedStrokeId(null);
+        }
+      }
+      setTextBoxStartPoint(null);
+      setTextBoxDraftEndPoint(null);
+      return;
+    }
+
     if (drawMode !== 'freehand') return;
     
     if (isDrawing && currentStroke.length > 1) {
@@ -2231,6 +2465,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
 
   const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
     e.preventDefault();
+    if (isSelectMode || isTextBoxMode || isPlaceMode) return;
     if (drawMode !== 'freehand') {
       // For line/curve modes, treat touch as click
       const point = getCanvasCoords(e);
@@ -2303,6 +2538,11 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
     setPlacedObjects([]);
     setSelectedObjectId(null);
     setSelectedStrokeId(null);
+    setIsResizingTextBox(false);
+    setTextBoxResizeHandle(null);
+    setTextBoxResizeAnchor(null);
+    setTextBoxStartPoint(null);
+    setTextBoxDraftEndPoint(null);
     setMarkerCounters({});
   };
 
@@ -2393,10 +2633,13 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
               onClick={() => {
                 setIsSelectMode(true);
                 setIsPlaceMode(false);
+                setIsTextBoxMode(false);
                 setLineStartPoint(null);
                 setCurvePoints([]);
                 setPolylinePoints([]);
                 setCurrentStroke([]);
+                setTextBoxStartPoint(null);
+                setTextBoxDraftEndPoint(null);
               }}
               className={`
                 w-8 h-8 flex items-center justify-center rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
@@ -2406,6 +2649,29 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
               `}
             >
               <MousePointer2 className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              title="Draw Text Box"
+              onClick={() => {
+                setIsTextBoxMode(true);
+                setIsSelectMode(false);
+                setIsPlaceMode(false);
+                setSelectedObjectId(null);
+                setSelectedStrokeId(null);
+                setLineStartPoint(null);
+                setCurvePoints([]);
+                setPolylinePoints([]);
+                setCurrentStroke([]);
+              }}
+              className={`
+                w-8 h-8 flex items-center justify-center rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
+                ${isTextBoxMode
+                  ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500 text-primary-700 dark:text-primary-300'
+                  : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
+              `}
+            >
+              <Type className="w-4 h-4" />
             </button>
           </div>
 
@@ -2423,16 +2689,19 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                   setDrawMode(mode);
                   setIsPlaceMode(false);
                   setIsSelectMode(false);
+                  setIsTextBoxMode(false);
                   setSelectedObjectId(null);
                   setSelectedStrokeId(null);
                   setLineStartPoint(null);
                   setCurvePoints([]);
                   setPolylinePoints([]);
                   setCurrentStroke([]);
+                  setTextBoxStartPoint(null);
+                  setTextBoxDraftEndPoint(null);
                 }}
                 className={`
                   w-8 h-8 flex items-center justify-center rounded-lg border-2 transition-all text-gray-800 dark:text-gray-200
-                  ${!isPlaceMode && !isSelectMode && drawMode === mode 
+                  ${!isPlaceMode && !isSelectMode && !isTextBoxMode && drawMode === mode 
                     ? 'bg-primary-100 dark:bg-primary-900/30 border-primary-500 text-primary-700 dark:text-primary-300' 
                     : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:border-gray-400'}
                 `}
@@ -2531,6 +2800,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                 onClick={() => {
                   setIsPlaceMode(true);
                   setIsSelectMode(false);
+                  setIsTextBoxMode(false);
                   setSelectedObjectId(null);
                   setSelectedStrokeId(null);
                   setPlaceableType('player');
@@ -2563,6 +2833,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
               onClick={() => {
                 setIsPlaceMode(true);
                 setIsSelectMode(false);
+                setIsTextBoxMode(false);
                 setSelectedObjectId(null);
                 setSelectedStrokeId(null);
                 setPlaceableType('player');
@@ -2592,6 +2863,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
               onClick={() => {
                 setIsPlaceMode(true);
                 setIsSelectMode(false);
+                setIsTextBoxMode(false);
                 setSelectedObjectId(null);
                 setSelectedStrokeId(null);
                 setPlaceableType('cone');
@@ -2616,6 +2888,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
               onClick={() => {
                 setIsPlaceMode(true);
                 setIsSelectMode(false);
+                setIsTextBoxMode(false);
                 setSelectedObjectId(null);
                 setSelectedStrokeId(null);
                 setPlaceableType('net');
@@ -2642,6 +2915,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
               onClick={() => {
                 setIsPlaceMode(true);
                 setIsSelectMode(false);
+                setIsTextBoxMode(false);
                 setSelectedObjectId(null);
                 setSelectedStrokeId(null);
                 setPlaceableType('smallNet');
@@ -2665,6 +2939,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
               onClick={() => {
                 setIsPlaceMode(true);
                 setIsSelectMode(false);
+                setIsTextBoxMode(false);
                 setSelectedObjectId(null);
                 setSelectedStrokeId(null);
                 setPlaceableType('pucks');
@@ -2694,7 +2969,9 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
               ref={canvasRef}
               width={canvasWidth}
               height={canvasHeight}
-              className="border border-gray-300 dark:border-gray-600 rounded cursor-crosshair bg-white touch-none"
+              className={`border border-gray-300 dark:border-gray-600 rounded bg-white touch-none ${
+                isSelectMode ? 'cursor-default' : isTextBoxMode ? 'cursor-crosshair' : 'cursor-crosshair'
+              }`}
               style={{ maxWidth: '100%', height: 'auto' }}
               onClick={handleCanvasClick}
               onDoubleClick={handleCanvasDoubleClick}
@@ -2719,7 +2996,7 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
             <div className="flex-1 text-xs text-center text-gray-500 dark:text-gray-400">
               {isSelectMode ? (
                 (selectedObjectId || selectedStrokeId)
-                  ? 'Drag to move, or click Delete' 
+                  ? 'Drag to move. Drag text box corners to resize. Click Delete to remove.' 
                   : 'Click an object or line to select it'
               ) : isPlaceMode ? (
                 placeableType === 'player' 
@@ -2752,6 +3029,10 @@ export function DrillSketchModal({ isOpen, onClose, onSave, initialSketchData }:
                       : placeableType === 'smallNet'
                         ? 'Click to place small net'
                         : 'Click to place pucks'
+              ) : isTextBoxMode ? (
+                textBoxStartPoint
+                  ? 'Drag to size your text box, then release to enter text'
+                  : 'Click and drag to draw a text box'
               ) : drawMode === 'freehand' ? (
                 'Click and drag to draw'
               ) : drawMode === 'line' ? (

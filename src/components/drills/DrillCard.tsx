@@ -134,7 +134,7 @@ export function DrillCard({
           {hasSketchThumbnail && (
             <div className="w-full h-[140px] rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-hidden">
               <Image
-                src={sketchImage || ''}
+                src={sketchImage}
                 alt={`Sketch for ${drill.name}`}
                 width={320}
                 height={200}
@@ -144,7 +144,13 @@ export function DrillCard({
             </div>
           )}
 
-          <div className="flex flex-col gap-2">
+          {!hasSketchThumbnail && (
+            <p className="text-sm text-gray-500 dark:text-gray-400 line-clamp-3">
+              {drill.description || drill.objective || drill.coachingPoints || drill.setup || 'No description'}
+            </p>
+          )}
+
+          <div className="mt-auto flex flex-col gap-2">
             {tagsBlock}
             {linksBlock}
           </div>
@@ -177,7 +183,7 @@ export function DrillCard({
             {hasSketchThumbnail && (
               <div className="w-24 h-16 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-hidden">
                 <Image
-                  src={sketchImage || ''}
+                  src={sketchImage}
                   alt={`Sketch for ${drill.name}`}
                   width={96}
                   height={64}
