@@ -13,7 +13,6 @@ import { Modal } from '@/components/ui/Modal';
 import { HelpTooltip } from '@/components/ui/HelpTooltip';
 import { 
   exportPracticePlanToPDF, 
-  exportPracticePlanToWord, 
   printPracticePlan 
 } from '@/lib/export';
 import { 
@@ -551,10 +550,6 @@ export default function HistoryPage() {
 
   const handleExportPDF = async (plan: PracticePlan) => {
     await exportPracticePlanToPDF(plan);
-  };
-
-  const handleExportWord = async (plan: PracticePlan) => {
-    await exportPracticePlanToWord(plan);
   };
 
   const handlePrint = async (plan: PracticePlan) => {
@@ -1181,10 +1176,6 @@ export default function HistoryPage() {
                         <Download className="w-3.5 h-3.5" />
                         PDF
                       </Button>
-                      <Button size="sm" variant="secondary" onClick={() => handleExportWord(plan)}>
-                        <Download className="w-3.5 h-3.5" />
-                        Word
-                      </Button>
                       <Button size="sm" variant="secondary" onClick={() => handlePrint(plan)}>
                         <Printer className="w-3.5 h-3.5" />
                         Print
@@ -1393,10 +1384,6 @@ export default function HistoryPage() {
               <Button variant="secondary" onClick={() => handleExportPDF(selectedPlan)}>
                 <Download className="w-4 h-4" />
                 Export PDF
-              </Button>
-              <Button variant="secondary" onClick={() => handleExportWord(selectedPlan)}>
-                <Download className="w-4 h-4" />
-                Export Word
               </Button>
               <Button variant="secondary" onClick={() => handlePrint(selectedPlan)}>
                 <Printer className="w-4 h-4" />

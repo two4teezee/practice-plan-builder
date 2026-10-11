@@ -1,8 +1,6 @@
 import { jsPDF } from 'jspdf';
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, ImageRun } from 'docx';
-import { saveAs } from 'file-saver';
-import type { PracticePlan, Drill, TimelineItem } from './types';
-import { getTimelineItemDuration, secondsToDurationString, flattenTimelineDrills } from './types';
+import type { PracticePlan, Drill, TimelineItem, DrillItem, ParallelSplitItem, PracticeGroup } from './types';
+import { getTimelineItemDuration, secondsToDurationString, flattenTimelineDrills, getEffectiveDrill } from './types';
 import { format } from 'date-fns';
 import { refreshPlanDrillData } from './db';
 
@@ -17,7 +15,7 @@ function getSketchInfo(sketchData?: string): SketchInfo | null {
   try {
     const data = JSON.parse(sketchData);
     if (!data.imagePreview) return null;
-    
+
     // Calculate aspect ratio based on rink view (width / height)
     // These match the canvas dimensions in DrillSketchModal.tsx
     // Full rink: 1000 x 425 = 2.35:1 ratio (200ft x 85ft)
@@ -42,7 +40,7 @@ function getSketchInfo(sketchData?: string): SketchInfo | null {
         // Default to half rink for backwards compatibility
         aspectRatio = 85 / 80; // ~1.06
     }
-    
+
     return {
       imagePreview: data.imagePreview,
       aspectRatio,
@@ -52,28 +50,11 @@ function getSketchInfo(sketchData?: string): SketchInfo | null {
   }
 }
 
-// Backward compatible helper that just returns the image
-function getSketchImagePreview(sketchData?: string): string | null {
-  const info = getSketchInfo(sketchData);
-  return info?.imagePreview || null;
-}
-
 const getLocationLabel = (location: PracticePlan['location']) => {
   if (!location) return '';
   if (typeof location === 'string') return location;
   return location.name || location.formattedAddress || '';
 };
-
-// Helper to convert base64 data URL to binary for Word export
-function base64ToUint8Array(base64: string): Uint8Array {
-  const base64Data = base64.split(',')[1];
-  const binaryString = atob(base64Data);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-}
 
 // Helper to split setup text into bullet points (by sentences)
 function splitSetupIntoBullets(setup: string): string[] {
@@ -87,198 +68,325 @@ function splitSetupIntoBullets(setup: string): string[] {
   return sentences;
 }
 
-// Helper to render timeline items recursively for PDF (compact version)
-function renderTimelineItemsToPDF(
-  doc: jsPDF, 
-  items: TimelineItem[], 
-  startY: number, 
-  pageWidth: number, 
-  indent: number = 0,
-  drillIndex: { value: number } = { value: 1 }
-): number {
-  let y = startY;
-  const lineHeight = 3.5; // Compact line height
-  const fontSize = 8;
+// ============================================
+// PDF layout
+// ============================================
+// Every block is measured before it is drawn, so page breaks only fall
+// between drills, and group bars are drawn one page segment at a time.
 
-  for (const item of items) {
-    if (y > 275) {
-      doc.addPage();
-      y = 12;
+// All units in mm (jsPDF default, A4 portrait)
+const MARGIN_X = 12;
+const PAGE_TOP = 12;
+const PAGE_BOTTOM = 285;
+const LINE_HEIGHT = 3.5;
+const BODY_FONT_SIZE = 8;
+const TITLE_FONT_SIZE = 9;
+const TITLE_BASELINE = 3; // From a block's top to its first baseline
+const DESCENDER = 1; // From the last baseline to the bottom of the text
+const SKETCH_COLUMN_WIDTH = 45;
+const SKETCH_MIN_HEIGHT = 25;
+const DIVIDER_GAP = 2.5; // Space above and below a divider
+const DIVIDER_COLOR: Rgb = { r: 226, g: 228, b: 232 };
+const SPLIT_COLOR: Rgb = { r: 59, g: 130, b: 246 };
+const GROUP_BAR_OFFSET = 4; // From the group's left edge to its bar
+const GROUP_DRILL_INDENT = 10; // From the group's left edge to its drills
+
+interface Rgb { r: number; g: number; b: number }
+
+function hexToRgb(hex: string): Rgb {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : SPLIT_COLOR;
+}
+
+// A group's vertical bar, open while the group's drills are being drawn
+interface GroupBar {
+  x: number;
+  color: Rgb;
+  segmentStartY: number;
+}
+
+class PdfCursor {
+  y = PAGE_TOP;
+  private openBars: GroupBar[] = [];
+
+  constructor(readonly doc: jsPDF) {}
+
+  get pageWidth() {
+    return this.doc.internal.pageSize.getWidth();
+  }
+
+  fits(height: number) {
+    return this.y + height <= PAGE_BOTTOM;
+  }
+
+  // Start a new page unless the block fits. A block taller than a whole
+  // page is drawn at the top of a fresh page and allowed to overflow.
+  ensureSpace(height: number) {
+    if (!this.fits(height) && this.y > PAGE_TOP) {
+      this.newPage();
     }
+  }
 
-    if (item.type === 'drill') {
-      const duration = item.customDuration || item.drill.duration;
-      const sketchInfo = getSketchInfo(item.drill.sketchData);
-      
-      // Reserve space for sketch column - fixed width regardless of aspect ratio
-      const sketchColumnWidth = sketchInfo ? 45 : 0;
-      const textWidth = sketchInfo 
-        ? pageWidth - 25 - indent - sketchColumnWidth - 3 
-        : pageWidth - 25 - indent;
-      
-      const drillStartY = y;
-      
-      // Title - compact
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
-      doc.text(`${drillIndex.value}. ${item.drill.name} (${duration})`, 12 + indent, y);
-      drillIndex.value++;
-      y += 4;
+  newPage() {
+    for (const bar of this.openBars) {
+      this.drawBarSegment(bar, this.y);
+    }
+    this.doc.addPage();
+    this.y = PAGE_TOP;
+    for (const bar of this.openBars) {
+      bar.segmentStartY = this.y;
+    }
+  }
 
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(fontSize);
+  openBar(x: number, color: Rgb) {
+    this.openBars.push({ x, color, segmentStartY: this.y });
+  }
 
-      if (item.drill.objective) {
-        const objLines = doc.splitTextToSize(`Objective: ${item.drill.objective}`, textWidth);
-        doc.text(objLines, 14 + indent, y);
-        y += objLines.length * lineHeight;
+  closeBar() {
+    const bar = this.openBars.pop();
+    if (bar) this.drawBarSegment(bar, this.y);
+  }
+
+  private drawBarSegment(bar: GroupBar, endY: number) {
+    if (endY <= bar.segmentStartY) return;
+    this.doc.setDrawColor(bar.color.r, bar.color.g, bar.color.b);
+    this.doc.setLineWidth(0.5);
+    this.doc.line(bar.x, bar.segmentStartY, bar.x, endY);
+  }
+
+  divider(left: number) {
+    this.y += DIVIDER_GAP;
+    this.doc.setDrawColor(DIVIDER_COLOR.r, DIVIDER_COLOR.g, DIVIDER_COLOR.b);
+    this.doc.setLineWidth(0.2);
+    this.doc.line(left, this.y, this.pageWidth - MARGIN_X, this.y);
+    this.y += DIVIDER_GAP;
+  }
+}
+
+// A positioned run of text inside a drill block, relative to the block's top
+interface TextOp {
+  text: string | string[];
+  dx: number;
+  dy: number;
+  bold: boolean;
+  fontSize: number;
+}
+
+interface DrillLayout {
+  height: number;
+  draw: (cursor: PdfCursor, left: number) => void;
+}
+
+function layoutDrill(doc: jsPDF, item: DrillItem, number: number, availableWidth: number): DrillLayout {
+  const drill = getEffectiveDrill(item);
+  const duration = item.customDuration || drill.duration;
+  const sketchInfo = getSketchInfo(drill.sketchData);
+  const textWidth = sketchInfo ? availableWidth - SKETCH_COLUMN_WIDTH - 3 : availableWidth;
+  const bodyIndent = 2;
+
+  const ops: TextOp[] = [];
+  let baseline = TITLE_BASELINE;
+
+  ops.push({ text: `${number}. ${drill.name} (${duration})`, dx: 0, dy: baseline, bold: true, fontSize: TITLE_FONT_SIZE });
+  baseline += 4;
+
+  doc.setFontSize(BODY_FONT_SIZE);
+  doc.setFont('helvetica', 'normal');
+
+  const addBody = (text: string, dx = bodyIndent, width = textWidth) => {
+    const lines: string[] = doc.splitTextToSize(text, width);
+    ops.push({ text: lines, dx, dy: baseline, bold: false, fontSize: BODY_FONT_SIZE });
+    baseline += lines.length * LINE_HEIGHT;
+  };
+
+  if (drill.objective) {
+    addBody(`Objective: ${drill.objective}`);
+  }
+
+  if (drill.setup) {
+    const setupBullets = splitSetupIntoBullets(drill.setup);
+    if (setupBullets.length > 1) {
+      for (const bullet of setupBullets) {
+        addBody(`• ${bullet}`, bodyIndent + 2, textWidth - 4);
       }
+    } else {
+      addBody(drill.setup);
+    }
+  }
 
-      if (item.drill.setup) {
-        const setupBullets = splitSetupIntoBullets(item.drill.setup);
-        if (setupBullets.length > 1) {
-          // Render as bulleted list
-          for (const bullet of setupBullets) {
-            const bulletLines = doc.splitTextToSize(`• ${bullet}`, textWidth - 4);
-            doc.text(bulletLines, 16 + indent, y);
-            y += bulletLines.length * lineHeight;
-          }
-        } else {
-          // Single sentence - render inline
-          const setupLines = doc.splitTextToSize(item.drill.setup, textWidth);
-          doc.text(setupLines, 14 + indent, y);
-          y += setupLines.length * lineHeight;
-        }
+  if (drill.execution) {
+    addBody(`Execution: ${drill.execution}`);
+  }
+
+  if (drill.coachingPoints) {
+    const label = 'Coaching Points: ';
+    doc.setFont('helvetica', 'bold');
+    const labelWidth = doc.getTextWidth(label);
+    doc.setFont('helvetica', 'normal');
+    ops.push({ text: label, dx: bodyIndent, dy: baseline, bold: true, fontSize: BODY_FONT_SIZE });
+
+    // Hanging indent: every line of the points lines up after the label
+    addBody(drill.coachingPoints.trim(), bodyIndent + labelWidth, textWidth - labelWidth);
+  }
+
+  if (item.selectedVariations && item.selectedVariations.length > 0) {
+    addBody(`Variations: ${item.selectedVariations.join(', ')}`);
+  }
+
+  const textHeight = baseline - LINE_HEIGHT + DESCENDER;
+
+  let sketchWidth = 0;
+  let sketchHeight = 0;
+  if (sketchInfo) {
+    // Sketches match the text height (with a floor), scaled down to fit the column
+    sketchHeight = Math.max(textHeight, SKETCH_MIN_HEIGHT);
+    sketchWidth = sketchHeight * sketchInfo.aspectRatio;
+    if (sketchWidth > SKETCH_COLUMN_WIDTH) {
+      sketchWidth = SKETCH_COLUMN_WIDTH;
+      sketchHeight = sketchWidth / sketchInfo.aspectRatio;
+    }
+  }
+
+  return {
+    height: Math.max(textHeight, sketchHeight),
+    draw: (cursor, left) => {
+      const top = cursor.y;
+      for (const op of ops) {
+        cursor.doc.setFont('helvetica', op.bold ? 'bold' : 'normal');
+        cursor.doc.setFontSize(op.fontSize);
+        cursor.doc.text(op.text, left + op.dx, top + op.dy);
       }
-
-      if (item.drill.execution) {
-        const execLines = doc.splitTextToSize(`Execution: ${item.drill.execution}`, textWidth);
-        doc.text(execLines, 14 + indent, y);
-        y += execLines.length * lineHeight;
-      }
-
-      if (item.drill.coachingPoints) {
-        doc.setFont('helvetica', 'bold');
-        doc.text('Coaching Points: ', 14 + indent, y);
-        const labelWidth = doc.getTextWidth('Coaching Points: ');
-        doc.setFont('helvetica', 'normal');
-        const cpLines = doc.splitTextToSize(item.drill.coachingPoints, textWidth - labelWidth);
-        doc.text(cpLines[0], 14 + indent + labelWidth, y);
-        if (cpLines.length > 1) {
-          for (let i = 1; i < cpLines.length; i++) {
-            y += lineHeight;
-            doc.text(cpLines[i], 14 + indent, y);
-          }
-        }
-        y += lineHeight;
-      }
-
-      if (item.selectedVariations && item.selectedVariations.length > 0) {
-        const varLines = doc.splitTextToSize(`Variations: ${item.selectedVariations.join(', ')}`, textWidth);
-        doc.text(varLines, 14 + indent, y);
-        y += varLines.length * lineHeight;
-      }
-
-      // Sketch image - fixed height with width calculated from aspect ratio
       if (sketchInfo) {
-        const textHeight = y - drillStartY;
-        
-        // Use a fixed height for all sketches, with width calculated from aspect ratio
-        const fixedSketchHeight = Math.max(textHeight, 25); // Fixed height (min 25 to ensure visibility)
-        let sketchWidth = fixedSketchHeight * sketchInfo.aspectRatio;
-        let sketchHeight = fixedSketchHeight;
-        
-        // If width exceeds column, scale down proportionally
-        if (sketchWidth > sketchColumnWidth) {
-          sketchWidth = sketchColumnWidth;
-          sketchHeight = sketchWidth / sketchInfo.aspectRatio;
-        }
-        
-        const imgX = pageWidth - 10 - sketchWidth;
         try {
-          doc.addImage(sketchInfo.imagePreview, 'PNG', imgX, drillStartY - 1, sketchWidth, sketchHeight);
-          y = Math.max(y, drillStartY + sketchHeight);
+          const imgX = cursor.pageWidth - MARGIN_X - sketchWidth;
+          cursor.doc.addImage(sketchInfo.imagePreview, 'PNG', imgX, top, sketchWidth, sketchHeight);
         } catch {
           // Skip on error
         }
       }
-
-      y += 3; // Minimal spacing between drills
-    } else {
-      // Parallel split - compact
-      const duration = getTimelineItemDuration(item);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(8);
-      doc.setTextColor(59, 130, 246);
-      doc.text(`PARALLEL GROUPS (${item.groups.length} groups, ${secondsToDurationString(duration)})`, 12 + indent, y);
-      doc.setTextColor(0, 0, 0);
-      y += 4;
-
-      for (const group of item.groups) {
-        if (y > 275) {
-          doc.addPage();
-          y = 12;
-        }
-
-        // Parse group color from hex to RGB
-        const hexToRgb = (hex: string) => {
-          const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-          return result ? {
-            r: parseInt(result[1], 16),
-            g: parseInt(result[2], 16),
-            b: parseInt(result[3], 16)
-          } : { r: 59, g: 130, b: 246 }; // Default to blue
-        };
-        const groupColor = hexToRgb(group.color);
-
-        // Group header - colored, uppercase with "GROUP" appended
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(groupColor.r, groupColor.g, groupColor.b);
-        doc.text(`${group.name.toUpperCase()} GROUP:`, 14 + indent, y);
-        doc.setTextColor(0, 0, 0);
-        y += 3.5;
-
-        const drillsStartY = y;
-        if (group.items.length === 0) {
-          doc.setFont('helvetica', 'italic');
-          doc.setFontSize(7);
-          doc.text('No drills', 20 + indent, y);
-          y += 3;
-        } else {
-          const groupDrillIndex = { value: 1 };
-          y = renderTimelineItemsToPDF(doc, group.items, y, pageWidth, indent + 10, groupDrillIndex);
-        }
-        
-        // Draw vertical line spanning all drills in this group (ends at last text line)
-        const lineX = 16 + indent;
-        doc.setDrawColor(groupColor.r, groupColor.g, groupColor.b);
-        doc.setLineWidth(0.5);
-        doc.line(lineX, drillsStartY - 1, lineX, y - 3);
-        doc.setDrawColor(0, 0, 0); // Reset to black
-        
-        y += 1;
-      }
-      y += 2;
-    }
-  }
-
-  return y;
+      cursor.y = top + Math.max(textHeight, sketchHeight);
+    },
+  };
 }
 
-export async function exportPracticePlanToPDF(plan: PracticePlan) {
+const SPLIT_HEADER_HEIGHT = 4;
+const GROUP_HEADER_HEIGHT = 4.5;
+const EMPTY_GROUP_HEIGHT = 3.5;
+
+function groupLabel(group: PracticeGroup) {
+  const name = group.name.toUpperCase();
+  return /\bGROUP\b/.test(name) ? `${name}:` : `${name} GROUP:`;
+}
+
+// Height of the part of an item that must stay on the same page as whatever
+// precedes it: a whole drill, or a split's headers plus its first drill.
+function leadingBlockHeight(doc: jsPDF, item: TimelineItem, availableWidth: number): number {
+  if (item.type === 'drill') {
+    return layoutDrill(doc, item, 1, availableWidth).height;
+  }
+  const firstGroup = item.groups[0];
+  return SPLIT_HEADER_HEIGHT + (firstGroup ? groupLeadingHeight(doc, firstGroup, availableWidth) : 0);
+}
+
+function groupLeadingHeight(doc: jsPDF, group: PracticeGroup, availableWidth: number): number {
+  const first = group.items[0];
+  return GROUP_HEADER_HEIGHT + (first
+    ? leadingBlockHeight(doc, first, availableWidth - GROUP_DRILL_INDENT)
+    : EMPTY_GROUP_HEIGHT);
+}
+
+function renderTimelineItemsToPDF(cursor: PdfCursor, items: TimelineItem[], left: number) {
+  const { doc } = cursor;
+  const availableWidth = cursor.pageWidth - MARGIN_X - left;
+  let drillNumber = 1;
+
+  items.forEach((item, index) => {
+    const leadingHeight = leadingBlockHeight(doc, item, availableWidth);
+    if (index > 0) {
+      // Skip the divider when the next block starts a new page anyway
+      if (cursor.fits(DIVIDER_GAP * 2 + leadingHeight)) {
+        cursor.divider(left);
+      } else {
+        cursor.newPage();
+      }
+    }
+    cursor.ensureSpace(leadingHeight);
+
+    if (item.type === 'drill') {
+      layoutDrill(doc, item, drillNumber++, availableWidth).draw(cursor, left);
+    } else {
+      renderSplitToPDF(cursor, item, left, availableWidth);
+    }
+  });
+}
+
+function renderSplitToPDF(cursor: PdfCursor, split: ParallelSplitItem, left: number, availableWidth: number) {
+  const { doc } = cursor;
+  const duration = getTimelineItemDuration(split);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(SPLIT_COLOR.r, SPLIT_COLOR.g, SPLIT_COLOR.b);
+  doc.text(`PARALLEL GROUPS (${split.groups.length} groups, ${secondsToDurationString(duration)})`, left, cursor.y + TITLE_BASELINE);
+  doc.setTextColor(0, 0, 0);
+  cursor.y += SPLIT_HEADER_HEIGHT;
+
+  split.groups.forEach((group, index) => {
+    if (index > 0) cursor.y += 3;
+    cursor.ensureSpace(groupLeadingHeight(doc, group, availableWidth));
+
+    const color = hexToRgb(group.color);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(color.r, color.g, color.b);
+    doc.text(groupLabel(group), left + 2, cursor.y + TITLE_BASELINE);
+    doc.setTextColor(0, 0, 0);
+    cursor.y += GROUP_HEADER_HEIGHT;
+
+    cursor.openBar(left + GROUP_BAR_OFFSET, color);
+    if (group.items.length === 0) {
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(7);
+      doc.text('No drills', left + GROUP_DRILL_INDENT, cursor.y + TITLE_BASELINE);
+      cursor.y += EMPTY_GROUP_HEIGHT;
+    } else {
+      renderTimelineItemsToPDF(cursor, group.items, left + GROUP_DRILL_INDENT);
+    }
+    cursor.closeBar();
+  });
+}
+
+// Plans saved before timelines existed only have the flat drills list
+function getPlanTimeline(plan: PracticePlan): TimelineItem[] {
+  if (plan.timeline && plan.timeline.length > 0) return plan.timeline;
+  return plan.drills.map((item): DrillItem => ({
+    type: 'drill',
+    id: item.id,
+    drillId: item.drillId,
+    drill: item.drill,
+    customDuration: item.customDuration,
+    customNotes: item.customNotes,
+  }));
+}
+
+async function buildPracticePlanPDF(plan: PracticePlan): Promise<jsPDF> {
   // Refresh drill data to get latest sketches and updates
   const normalizedPlan = await refreshPlanDrillData(plan);
-  
-  const doc = new jsPDF();
-  const pageWidth = doc.internal.pageSize.getWidth();
-  let y = 12;
+
+  // Without compress, jsPDF stores each sketch as raw uncompressed pixels (~1.7MB per full-rink sketch)
+  const doc = new jsPDF({ compress: true });
+  const cursor = new PdfCursor(doc);
+  const pageWidth = cursor.pageWidth;
 
   // Title - compact
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
-  doc.text(normalizedPlan.name, pageWidth / 2, y, { align: 'center' });
-  y += 6;
+  doc.text(normalizedPlan.name, pageWidth / 2, cursor.y, { align: 'center' });
+  cursor.y += 6;
 
   // Practice Info - single line
   doc.setFontSize(9);
@@ -290,632 +398,98 @@ export async function exportPracticePlanToPDF(plan: PracticePlan) {
     getLocationLabel(normalizedPlan.location) || '',
     normalizedPlan.teamName || '',
   ].filter(Boolean);
-  const infoLine = infoParts.join(' | ');
-  doc.text(infoLine, pageWidth / 2, y, { align: 'center' });
-  y += 5;
+  doc.text(infoParts.join(' | '), pageWidth / 2, cursor.y, { align: 'center' });
+  cursor.y += 5;
 
   // Equipment - inline if short
   if (normalizedPlan.equipment) {
     doc.setFontSize(8);
     doc.setFont('helvetica', 'bold');
-    doc.text('Equipment: ', 12, y);
+    doc.text('Equipment: ', MARGIN_X, cursor.y);
+    const labelWidth = doc.getTextWidth('Equipment: ');
     doc.setFont('helvetica', 'normal');
-    const eqText = doc.splitTextToSize(normalizedPlan.equipment, pageWidth - 40);
-    doc.text(eqText, 32, y);
-    y += eqText.length * 3.5 + 2;
+    const eqText = doc.splitTextToSize(normalizedPlan.equipment, pageWidth - MARGIN_X * 2 - labelWidth);
+    doc.text(eqText, MARGIN_X + labelWidth, cursor.y);
+    cursor.y += eqText.length * LINE_HEIGHT + 2;
   }
 
   // Divider line
   doc.setDrawColor(200, 200, 200);
-  doc.line(12, y, pageWidth - 12, y);
-  y += 4;
+  doc.setLineWidth(0.2);
+  doc.line(MARGIN_X, cursor.y, pageWidth - MARGIN_X, cursor.y);
+  cursor.y += 4;
 
   // Practice Plan header
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
-  const allDrills = flattenTimelineDrills(normalizedPlan.timeline);
-  doc.text(`Drills (${allDrills.length})`, 12, y);
-  y += 5;
+  const timeline = getPlanTimeline(normalizedPlan);
+  doc.text(`Drills (${flattenTimelineDrills(timeline).length})`, MARGIN_X, cursor.y);
+  cursor.y += 2;
 
-  // Render timeline items
-  if (normalizedPlan.timeline && normalizedPlan.timeline.length > 0) {
-    y = renderTimelineItemsToPDF(doc, normalizedPlan.timeline, y, pageWidth);
-  } else {
-    // Fallback to legacy drills - compact
-    doc.setFontSize(8);
-    normalizedPlan.drills.forEach((item, index) => {
-      if (y > 275) {
-        doc.addPage();
-        y = 12;
-      }
+  renderTimelineItemsToPDF(cursor, timeline, MARGIN_X);
 
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
-      doc.text(`${index + 1}. ${item.drill.name} (${item.drill.duration})`, 12, y);
-      y += 4;
-      
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8);
-      
-      if (item.drill.objective) {
-        const objLines = doc.splitTextToSize(`Objective: ${item.drill.objective}`, pageWidth - 25);
-        doc.text(objLines, 14, y);
-        y += objLines.length * 3.5;
-      }
-      
-      if (item.drill.setup) {
-        const setupBullets = splitSetupIntoBullets(item.drill.setup);
-        if (setupBullets.length > 1) {
-          for (const bullet of setupBullets) {
-            const bulletLines = doc.splitTextToSize(`• ${bullet}`, pageWidth - 27);
-            doc.text(bulletLines, 16, y);
-            y += bulletLines.length * 3.5;
-          }
-        } else {
-          const setupLines = doc.splitTextToSize(item.drill.setup, pageWidth - 25);
-          doc.text(setupLines, 14, y);
-          y += setupLines.length * 3.5;
-        }
-      }
-      
-      if (item.drill.execution) {
-        const execLines = doc.splitTextToSize(`Execution: ${item.drill.execution}`, pageWidth - 25);
-        doc.text(execLines, 14, y);
-        y += execLines.length * 3.5;
-      }
-      
-      if (item.drill.coachingPoints) {
-        doc.setFont('helvetica', 'bold');
-        doc.text('Coaching Points: ', 14, y);
-        const labelWidth = doc.getTextWidth('Coaching Points: ');
-        doc.setFont('helvetica', 'normal');
-        const cpLines = doc.splitTextToSize(item.drill.coachingPoints, pageWidth - 25 - labelWidth);
-        doc.text(cpLines[0], 14 + labelWidth, y);
-        if (cpLines.length > 1) {
-          for (let i = 1; i < cpLines.length; i++) {
-            y += 3.5;
-            doc.text(cpLines[i], 14, y);
-          }
-        }
-        y += 3.5;
-      }
-      
-      y += 3;
-    });
-  }
-
-  // Notes - compact
+  // Notes - compact, may flow across pages line by line
   if (normalizedPlan.notes) {
-    if (y > 265) {
-      doc.addPage();
-      y = 12;
-    }
-    y += 2;
+    cursor.ensureSpace(14);
+    cursor.y += 3;
     doc.setDrawColor(200, 200, 200);
-    doc.line(12, y, pageWidth - 12, y);
-    y += 4;
+    doc.setLineWidth(0.2);
+    doc.line(MARGIN_X, cursor.y, pageWidth - MARGIN_X, cursor.y);
+    cursor.y += 4;
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
-    doc.text('Notes:', 12, y);
+    doc.text('Notes:', MARGIN_X, cursor.y);
+    cursor.y += 4;
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
-    const noteLines = doc.splitTextToSize(normalizedPlan.notes, pageWidth - 24);
-    doc.text(noteLines, 12, y + 4);
-  }
-
-  doc.save(`${normalizedPlan.name.replace(/[^a-z0-9]/gi, '_')}.pdf`);
-}
-
-// Helper to generate Word paragraphs for timeline items
-function generateTimelineItemParagraphs(
-  items: TimelineItem[], 
-  drillIndex: { value: number } = { value: 1 },
-  indent: number = 0
-): Paragraph[] {
-  const paragraphs: Paragraph[] = [];
-  const fontSize = 18; // 9pt (size is in half-points)
-  const smallIndent = 200; // Compact indent (was 720)
-
-  for (const item of items) {
-    if (item.type === 'drill') {
-      const duration = item.customDuration || item.drill.duration;
-      const sketchInfo = getSketchInfo(item.drill.sketchData);
-      
-      // Build all content as TextRuns for compact single-paragraph approach
-      const contentRuns: TextRun[] = [];
-      
-      // Title
-      contentRuns.push(new TextRun({ text: `${drillIndex.value}. ${item.drill.name}`, bold: true, size: 20 }));
-      contentRuns.push(new TextRun({ text: ` (${duration})`, size: fontSize }));
-      drillIndex.value++;
-
-      // Content on same/next lines with minimal spacing
-      if (item.drill.objective) {
-        contentRuns.push(new TextRun({ text: ' | ', size: fontSize, color: '999999' }));
-        contentRuns.push(new TextRun({ text: 'Obj: ', bold: true, size: fontSize }));
-        contentRuns.push(new TextRun({ text: item.drill.objective, size: fontSize }));
-      }
-      if (item.drill.setup) {
-        const setupBullets = splitSetupIntoBullets(item.drill.setup);
-        contentRuns.push(new TextRun({ text: ' | ', size: fontSize, color: '999999' }));
-        if (setupBullets.length > 1) {
-          // Multiple sentences - show as bullet points
-          setupBullets.forEach((bullet, idx) => {
-            if (idx > 0) contentRuns.push(new TextRun({ text: ' ', size: fontSize }));
-            contentRuns.push(new TextRun({ text: `• ${bullet}`, size: fontSize }));
-          });
-        } else {
-          // Single sentence - show inline without label
-          contentRuns.push(new TextRun({ text: item.drill.setup, size: fontSize }));
-        }
-      }
-      if (item.drill.execution) {
-        contentRuns.push(new TextRun({ text: ' | ', size: fontSize, color: '999999' }));
-        contentRuns.push(new TextRun({ text: 'Exec: ', bold: true, size: fontSize }));
-        contentRuns.push(new TextRun({ text: item.drill.execution, size: fontSize }));
-      }
-      if (item.drill.coachingPoints) {
-        contentRuns.push(new TextRun({ text: ' | ', size: fontSize, color: '999999' }));
-        contentRuns.push(new TextRun({ text: 'Tips: ', bold: true, size: fontSize }));
-        contentRuns.push(new TextRun({ text: item.drill.coachingPoints, size: fontSize }));
-      }
-      if (item.selectedVariations && item.selectedVariations.length > 0) {
-        contentRuns.push(new TextRun({ text: ' | ', size: fontSize, color: '999999' }));
-        contentRuns.push(new TextRun({ text: 'Vars: ', bold: true, size: fontSize }));
-        contentRuns.push(new TextRun({ text: item.selectedVariations.join(', '), size: fontSize }));
-      }
-
-      // If there's a sketch, use a compact table layout
-      if (sketchInfo) {
-        try {
-          const imageData = base64ToUint8Array(sketchInfo.imagePreview);
-          
-          // Fixed height for all sketches, width calculated from aspect ratio
-          const fixedHeight = 70; // Fixed height in pixels for all sketch types
-          const maxWidth = 120; // Max width to prevent overflow
-          let imgHeight = fixedHeight;
-          let imgWidth = Math.round(fixedHeight * sketchInfo.aspectRatio);
-          
-          // If width exceeds max, scale down proportionally
-          if (imgWidth > maxWidth) {
-            imgWidth = maxWidth;
-            imgHeight = Math.round(imgWidth / sketchInfo.aspectRatio);
-          }
-          
-          const table = new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            borders: {
-              top: { style: 'none' as const, size: 0, color: 'FFFFFF' },
-              bottom: { style: 'none' as const, size: 0, color: 'FFFFFF' },
-              left: { style: 'none' as const, size: 0, color: 'FFFFFF' },
-              right: { style: 'none' as const, size: 0, color: 'FFFFFF' },
-              insideHorizontal: { style: 'none' as const, size: 0, color: 'FFFFFF' },
-              insideVertical: { style: 'none' as const, size: 0, color: 'FFFFFF' },
-            },
-            rows: [
-              new TableRow({
-                children: [
-                  new TableCell({
-                    width: { size: 75, type: WidthType.PERCENTAGE },
-                    borders: {
-                      top: { style: 'none' as const, size: 0, color: 'FFFFFF' },
-                      bottom: { style: 'none' as const, size: 0, color: 'FFFFFF' },
-                      left: { style: 'none' as const, size: 0, color: 'FFFFFF' },
-                      right: { style: 'none' as const, size: 0, color: 'FFFFFF' },
-                    },
-                    children: [new Paragraph({ indent: { left: indent * smallIndent }, children: contentRuns })],
-                  }),
-                  new TableCell({
-                    width: { size: 25, type: WidthType.PERCENTAGE },
-                    borders: {
-                      top: { style: 'none' as const, size: 0, color: 'FFFFFF' },
-                      bottom: { style: 'none' as const, size: 0, color: 'FFFFFF' },
-                      left: { style: 'none' as const, size: 0, color: 'FFFFFF' },
-                      right: { style: 'none' as const, size: 0, color: 'FFFFFF' },
-                    },
-                    children: [
-                      new Paragraph({
-                        children: [
-                          new ImageRun({
-                            data: imageData,
-                            transformation: { width: imgWidth, height: imgHeight },
-                            type: 'png',
-                          }),
-                        ],
-                      }),
-                    ],
-                  }),
-                ],
-              }),
-            ],
-          });
-          paragraphs.push(table as unknown as Paragraph);
-        } catch {
-          // Fallback to text-only
-          paragraphs.push(new Paragraph({ indent: { left: indent * smallIndent }, children: contentRuns }));
-        }
-      } else {
-        paragraphs.push(new Paragraph({ indent: { left: indent * smallIndent }, children: contentRuns }));
-      }
-    } else {
-      // Parallel split - compact
-      const duration = getTimelineItemDuration(item);
-      paragraphs.push(
-        new Paragraph({
-          indent: { left: indent * smallIndent },
-          spacing: { before: 100 },
-          children: [
-            new TextRun({ text: `PARALLEL `, bold: true, size: 18, color: '3B82F6' }),
-            new TextRun({ text: `(${item.groups.length} groups, ${secondsToDurationString(duration)})`, size: 16, color: '6B7280' }),
-          ],
-        })
-      );
-
-      for (const group of item.groups) {
-        // Get group color without # prefix for docx
-        const groupColorHex = group.color.replace('#', '');
-        
-        // Group header - colored, uppercase with "GROUP" appended
-        paragraphs.push(
-          new Paragraph({
-            indent: { left: (indent + 1) * smallIndent },
-            children: [new TextRun({ text: `${group.name.toUpperCase()} GROUP:`, bold: true, size: 18, color: groupColorHex })],
-          })
-        );
-
-        if (group.items.length === 0) {
-          paragraphs.push(new Paragraph({
-            indent: { left: (indent + 2) * smallIndent },
-            border: { left: { style: 'single' as const, size: 12, color: groupColorHex } },
-            children: [new TextRun({ text: 'No drills', italics: true, size: 16 })],
-          }));
-        } else {
-          const groupDrillIndex = { value: 1 };
-          // Get group paragraphs and add left border to each
-          const groupParagraphs = generateTimelineItemParagraphs(group.items, groupDrillIndex, indent + 2);
-          for (const para of groupParagraphs) {
-            if (para instanceof Paragraph) {
-              // Add left border for vertical line effect with group color
-              (para as Paragraph & { border?: unknown }).border = { 
-                left: { style: 'single' as const, size: 12, color: groupColorHex } 
-              };
-            }
-          }
-          paragraphs.push(...groupParagraphs);
-        }
-      }
+    const noteLines: string[] = doc.splitTextToSize(normalizedPlan.notes, pageWidth - MARGIN_X * 2);
+    for (const line of noteLines) {
+      cursor.ensureSpace(LINE_HEIGHT);
+      doc.text(line, MARGIN_X, cursor.y);
+      cursor.y += LINE_HEIGHT;
     }
   }
 
-  return paragraphs;
+  return doc;
 }
 
-export async function exportPracticePlanToWord(plan: PracticePlan) {
-  // Refresh drill data to get latest sketches and updates
-  const normalizedPlan = await refreshPlanDrillData(plan);
-  
-  const practiceDate = normalizedPlan.date instanceof Date ? normalizedPlan.date : new Date(normalizedPlan.date);
-  const allDrills = flattenTimelineDrills(normalizedPlan.timeline);
-  
-  // Generate timeline content
-  let timelineContent: Paragraph[];
-  if (normalizedPlan.timeline && normalizedPlan.timeline.length > 0) {
-    timelineContent = generateTimelineItemParagraphs(normalizedPlan.timeline);
-  } else {
-    // Fallback to legacy table format
-    const drillRows = normalizedPlan.drills.map((item, index) => 
-      new TableRow({
-        children: [
-          new TableCell({
-            width: { size: 5, type: WidthType.PERCENTAGE },
-            children: [new Paragraph({ children: [new TextRun({ text: `${index + 1}`, bold: true })] })],
-          }),
-          new TableCell({
-            width: { size: 25, type: WidthType.PERCENTAGE },
-            children: [new Paragraph({ children: [new TextRun({ text: item.drill.name, bold: true })] })],
-          }),
-          new TableCell({
-            width: { size: 10, type: WidthType.PERCENTAGE },
-            children: [new Paragraph(item.drill.duration)],
-          }),
-          new TableCell({
-            width: { size: 60, type: WidthType.PERCENTAGE },
-            children: [
-              item.drill.objective ? new Paragraph({ children: [new TextRun({ text: 'Objective: ', bold: true }), new TextRun(item.drill.objective)] }) : new Paragraph(''),
-              ...(item.drill.setup ? (() => {
-                const bullets = splitSetupIntoBullets(item.drill.setup);
-                if (bullets.length > 1) {
-                  return bullets.map(bullet => new Paragraph({ children: [new TextRun({ text: `• ${bullet}` })] }));
-                }
-                return [new Paragraph({ children: [new TextRun(item.drill.setup)] })];
-              })() : [new Paragraph('')]),
-              item.drill.execution ? new Paragraph({ children: [new TextRun({ text: 'Execution: ', bold: true }), new TextRun(item.drill.execution)] }) : new Paragraph(''),
-              item.drill.coachingPoints ? new Paragraph({ children: [new TextRun({ text: 'Coaching Points: ', bold: true }), new TextRun(item.drill.coachingPoints)] }) : new Paragraph(''),
-            ],
-          }),
-        ],
-      })
-    );
-
-    timelineContent = [
-      new Table({
-        width: { size: 100, type: WidthType.PERCENTAGE },
-        rows: [
-          new TableRow({
-            children: [
-              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: '#', bold: true })] })] }),
-              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Drill', bold: true })] })] }),
-              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Time', bold: true })] })] }),
-              new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: 'Details', bold: true })] })] }),
-            ],
-          }),
-          ...drillRows,
-        ],
-      }) as unknown as Paragraph, // Type workaround
-    ];
-  }
-
-  // Build compact document
-  const locationLabel = getLocationLabel(normalizedPlan.location);
-  const infoItems = [
-    format(practiceDate, 'MMM d, yyyy'),
-    normalizedPlan.duration,
-    locationLabel || '',
-    normalizedPlan.teamName || '',
-  ].filter(Boolean);
-  const infoRuns: TextRun[] = [];
-  infoItems.forEach((item, index) => {
-    if (index > 0) {
-      infoRuns.push(new TextRun({ text: ' | ', size: 20, color: '999999' }));
-    }
-    infoRuns.push(new TextRun({ text: item as string, size: 20 }));
-  });
-  const headerChildren: Paragraph[] = [
-    // Title
-    new Paragraph({
-      children: [new TextRun({ text: normalizedPlan.name, bold: true, size: 28 })],
-      spacing: { after: 100 },
-    }),
-    // Info line - all on one line
-    new Paragraph({
-      children: infoRuns,
-      spacing: { after: 50 },
-    }),
-  ];
-
-  // Equipment - compact inline
-  if (normalizedPlan.equipment) {
-    headerChildren.push(new Paragraph({
-      children: [
-        new TextRun({ text: 'Equipment: ', bold: true, size: 18 }),
-        new TextRun({ text: normalizedPlan.equipment, size: 18 }),
-      ],
-      spacing: { after: 50 },
-    }));
-  }
-
-  // Drills header
-  headerChildren.push(new Paragraph({
-    children: [new TextRun({ text: `Drills (${allDrills.length})`, bold: true, size: 22 })],
-    spacing: { before: 150, after: 100 },
-    border: { bottom: { style: 'single' as const, size: 6, color: 'CCCCCC' } },
-  }));
-
-  // Notes at the end - compact
-  const footerChildren: Paragraph[] = [];
-  if (normalizedPlan.notes) {
-    footerChildren.push(new Paragraph({
-      children: [
-        new TextRun({ text: 'Notes: ', bold: true, size: 18 }),
-        new TextRun({ text: normalizedPlan.notes, size: 18 }),
-      ],
-      spacing: { before: 150 },
-      border: { top: { style: 'single' as const, size: 6, color: 'CCCCCC' } },
-    }));
-  }
-
-  const doc = new Document({
-    sections: [{
-      properties: {
-        page: {
-          margin: { top: 720, bottom: 720, left: 720, right: 720 }, // 0.5 inch margins
-        },
-      },
-      children: [
-        ...headerChildren,
-        ...timelineContent,
-        ...footerChildren,
-      ],
-    }],
-  });
-
-  const blob = await Packer.toBlob(doc);
-  saveAs(blob, `${normalizedPlan.name.replace(/[^a-z0-9]/gi, '_')}.docx`);
+function pdfFileName(plan: PracticePlan) {
+  return `${plan.name.replace(/[^a-z0-9]/gi, '_')}.pdf`;
 }
 
-// Helper to generate HTML for timeline items (compact version)
-function generateTimelineItemsHtml(
-  items: TimelineItem[], 
-  drillIndex: { value: number } = { value: 1 }
-): string {
-  let html = '';
-
-  for (const item of items) {
-    if (item.type === 'drill') {
-      const duration = item.customDuration || item.drill.duration;
-      const hasVariations = item.selectedVariations && item.selectedVariations.length > 0;
-      const sketchImage = getSketchImagePreview(item.drill.sketchData);
-      
-      // Compact: combine fields with separators
-      const details: string[] = [];
-      if (item.drill.objective) details.push(`<strong>Obj:</strong> ${item.drill.objective}`);
-      if (item.drill.setup) {
-        const setupBullets = splitSetupIntoBullets(item.drill.setup);
-        if (setupBullets.length > 1) {
-          details.push(`<ul style="margin:0;padding-left:16px;">${setupBullets.map(b => `<li>${b}</li>`).join('')}</ul>`);
-        } else {
-          details.push(item.drill.setup);
-        }
-      }
-      if (item.drill.execution) details.push(`<strong>Exec:</strong> ${item.drill.execution}`);
-      if (item.drill.coachingPoints) details.push(`<strong>Tips:</strong> ${item.drill.coachingPoints}`);
-      if (hasVariations) details.push(`<strong>Vars:</strong> ${item.selectedVariations!.join(', ')}`);
-      
-      const textContent = `
-        <div class="drill-text">
-          <h3>${drillIndex.value}. ${item.drill.name} <span class="time">(${duration})</span></h3>
-          ${details.length > 0 ? `<p>${details.join(' <span style="color:#ccc">|</span> ')}</p>` : ''}
-        </div>
-      `;
-      
-      const sketchContent = sketchImage ? `
-        <div class="drill-sketch">
-          <img src="${sketchImage}" alt="Drill sketch" />
-        </div>
-      ` : '';
-      
-      html += `
-        <div class="drill ${sketchImage ? 'has-sketch' : ''}">
-          ${textContent}
-          ${sketchContent}
-        </div>
-      `;
-      drillIndex.value++;
-    } else {
-      // Parallel split
-      const duration = getTimelineItemDuration(item);
-      html += `
-        <div class="parallel-split">
-          <div class="parallel-header">
-            <strong>PARALLEL GROUPS </strong> 
-            <span class="meta">(${item.groups.length} groups, ${secondsToDurationString(duration)})</span>
-          </div>
-          <div class="parallel-groups" style="display: grid; grid-template-columns: repeat(${item.groups.length}, 1fr); gap: 15px;">
-      `;
-
-      for (const group of item.groups) {
-        html += `
-          <div class="group" style="border: 2px solid ${group.color}40; border-radius: 8px; overflow: hidden;">
-            <div class="group-header" style="background: ${group.color}20; padding: 8px 12px; font-weight: bold; color: ${group.color}; text-transform: uppercase;">
-              ${group.name.toUpperCase()} GROUP:
-            </div>
-            <div class="group-content" style="padding: 10px; border-left: 3px solid ${group.color}; margin-left: 4px;">
-        `;
-
-        if (group.items.length === 0) {
-          html += `<p class="no-drills" style="color: #9ca3af; font-style: italic; text-align: center;">No drills</p>`;
-        } else {
-          const groupDrillIndex = { value: 1 };
-          html += generateTimelineItemsHtml(group.items, groupDrillIndex);
-        }
-
-        html += `
-            </div>
-          </div>
-        `;
-      }
-
-      html += `
-          </div>
-        </div>
-      `;
-    }
-  }
-
-  return html;
+export async function exportPracticePlanToPDF(plan: PracticePlan) {
+  const doc = await buildPracticePlanPDF(plan);
+  doc.save(pdfFileName(plan));
 }
+
+// Prints the same PDF the export produces, via a hidden iframe
+const PRINT_FRAME_ID = 'practice-plan-print-frame';
 
 export async function printPracticePlan(plan: PracticePlan) {
-  // Refresh drill data to get latest sketches and updates
-  const normalizedPlan = await refreshPlanDrillData(plan);
-  
-  const practiceDate = normalizedPlan.date instanceof Date ? normalizedPlan.date : new Date(normalizedPlan.date);
-  const allDrills = flattenTimelineDrills(normalizedPlan.timeline);
-  const infoParts = [
-    format(practiceDate, 'MMM d, yyyy'),
-    normalizedPlan.duration,
-    getLocationLabel(normalizedPlan.location) || '',
-    normalizedPlan.teamName || '',
-  ].filter(Boolean);
-  const infoLine = infoParts.join(' | ');
-  
-  // Generate timeline HTML
-  let timelineHtml: string;
-  if (normalizedPlan.timeline && normalizedPlan.timeline.length > 0) {
-    timelineHtml = generateTimelineItemsHtml(normalizedPlan.timeline);
-  } else {
-    // Fallback to legacy drills
-    timelineHtml = normalizedPlan.drills.map((item, index) => {
-      let setupHtml = '';
-      if (item.drill.setup) {
-        const bullets = splitSetupIntoBullets(item.drill.setup);
-        if (bullets.length > 1) {
-          setupHtml = `<ul style="margin:4px 0;padding-left:16px;">${bullets.map(b => `<li>${b}</li>`).join('')}</ul>`;
-        } else {
-          setupHtml = `<p>${item.drill.setup}</p>`;
-        }
-      }
-      return `
-      <div class="drill">
-        <h3>${index + 1}. ${item.drill.name} <span class="time">(${item.drill.duration})</span></h3>
-        ${item.drill.objective ? `<p><strong>Objective:</strong> ${item.drill.objective}</p>` : ''}
-        ${setupHtml}
-        ${item.drill.execution ? `<p><strong>Execution:</strong> ${item.drill.execution}</p>` : ''}
-        ${item.drill.coachingPoints ? `<p><strong>Coaching Points:</strong> ${item.drill.coachingPoints}</p>` : ''}
-      </div>
-    `;
-    }).join('');
+  const doc = await buildPracticePlanPDF(plan);
+  const url = URL.createObjectURL(doc.output('blob'));
+
+  // Reuse one frame; the previous print job is finished by the time another starts
+  const previous = document.getElementById(PRINT_FRAME_ID) as HTMLIFrameElement | null;
+  if (previous) {
+    URL.revokeObjectURL(previous.src);
+    previous.remove();
   }
 
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>${normalizedPlan.name}</title>
-      <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 10px; font-size: 11px; line-height: 1.3; }
-        h1 { text-align: center; color: #1e3a8a; margin: 0 0 4px 0; font-size: 16px; }
-        .info-line { text-align: center; color: #666; margin-bottom: 8px; font-size: 10px; }
-        .equipment { background: #fef3c7; padding: 4px 8px; border-radius: 4px; margin-bottom: 8px; font-size: 10px; }
-        h2 { color: #1e3a8a; border-bottom: 1px solid #1e3a8a; padding-bottom: 2px; margin: 8px 0 6px 0; font-size: 12px; }
-        .drill { margin-bottom: 6px; padding: 6px 8px; background: #f9fafb; border-left: 3px solid #3b82f6; }
-        .drill h3 { margin: 0 0 3px 0; color: #1f2937; font-size: 11px; }
-        .drill .time { color: #6b7280; font-weight: normal; font-size: 10px; }
-        .drill p { margin: 2px 0; color: #374151; font-size: 10px; }
-        .drill.has-sketch { display: flex; gap: 8px; align-items: flex-start; }
-        .drill.has-sketch .drill-text { flex: 1; min-width: 0; }
-        .drill.has-sketch .drill-sketch { flex-shrink: 0; display: flex; align-items: flex-start; }
-        .drill.has-sketch .drill-sketch img { max-width: 100px; max-height: 70px; width: auto; height: auto; border: 1px solid #e5e7eb; border-radius: 4px; object-fit: contain; }
-        .notes { background: #e0f2fe; padding: 6px 8px; border-radius: 4px; font-size: 10px; }
-        .parallel-split { margin: 8px 0; padding: 8px; border: 1px dashed #3b82f6; border-radius: 6px; background: #eff6ff; }
-        .parallel-header { margin-bottom: 6px; color: #1e40af; font-size: 10px; }
-        .group-content .drill { background: white; margin-bottom: 4px; padding: 4px 6px; }
-        .group-content .drill h3 { font-size: 10px; }
-        .group-content .drill p { font-size: 9px; }
-        .group-content .drill.has-sketch .drill-sketch img { max-width: 80px; max-height: 55px; }
-        @media print { 
-          body { padding: 0; margin: 0; } 
-          .parallel-split { break-inside: avoid; }
-        }
-      </style>
-    </head>
-    <body>
-      <h1>${normalizedPlan.name}</h1>
-      <div class="info-line">${infoLine}</div>
-      ${normalizedPlan.equipment ? `<div class="equipment"><strong>Equipment:</strong> ${normalizedPlan.equipment}</div>` : ''}
-      <h2>Drills (${allDrills.length})</h2>
-      ${timelineHtml}
-      ${normalizedPlan.notes ? `<div class="notes" style="margin-top: 8px;"><strong>Notes:</strong> ${normalizedPlan.notes}</div>` : ''}
-    </body>
-    </html>
-  `;
-
-  const printWindow = window.open('', '_blank');
-  if (printWindow) {
-    printWindow.document.write(html);
-    printWindow.document.close();
-    printWindow.print();
-  }
+  const frame = document.createElement('iframe');
+  frame.id = PRINT_FRAME_ID;
+  frame.style.position = 'fixed';
+  frame.style.right = '0';
+  frame.style.bottom = '0';
+  frame.style.width = '0';
+  frame.style.height = '0';
+  frame.style.border = '0';
+  frame.onload = () => {
+    frame.contentWindow?.focus();
+    frame.contentWindow?.print();
+  };
+  frame.src = url;
+  document.body.appendChild(frame);
 }
 
 // Export drills library functions
@@ -965,54 +539,4 @@ export async function exportDrillsLibraryToPDF(drills: Drill[]) {
   });
 
   doc.save('Drills_Library.pdf');
-}
-
-export async function exportDrillsLibraryToWord(drills: Drill[]) {
-  const drillParagraphs = drills.flatMap((drill, index) => [
-    new Paragraph({
-      children: [new TextRun({ text: `${index + 1}. ${drill.name}`, bold: true, size: 28 })],
-    }),
-    new Paragraph({
-      children: [
-        new TextRun({ text: 'Category: ', bold: true }),
-        new TextRun(drill.category),
-        new TextRun(' | '),
-        new TextRun({ text: 'Duration: ', bold: true }),
-        new TextRun(drill.duration),
-        new TextRun(' | '),
-        new TextRun({ text: 'Focus: ', bold: true }),
-        new TextRun(drill.skillFocus),
-      ],
-    }),
-    drill.objective ? new Paragraph({
-      children: [new TextRun({ text: 'Objective: ', bold: true }), new TextRun(drill.objective)],
-    }) : new Paragraph(''),
-    drill.execution ? new Paragraph({
-      children: [new TextRun({ text: 'Execution: ', bold: true }), new TextRun(drill.execution)],
-    }) : new Paragraph(''),
-    drill.equipment ? new Paragraph({
-      children: [new TextRun({ text: 'Equipment: ', bold: true }), new TextRun(drill.equipment)],
-    }) : new Paragraph(''),
-    new Paragraph(''),
-  ]);
-
-  const doc = new Document({
-    sections: [{
-      properties: {},
-      children: [
-        new Paragraph({
-          text: 'Hockey Drills Library',
-          heading: HeadingLevel.HEADING_1,
-        }),
-        new Paragraph({
-          children: [new TextRun({ text: `Generated on ${format(new Date(), 'MMMM d, yyyy')}`, italics: true })],
-        }),
-        new Paragraph(''),
-        ...drillParagraphs,
-      ],
-    }],
-  });
-
-  const blob = await Packer.toBlob(doc);
-  saveAs(blob, 'Drills_Library.docx');
 }
