@@ -1,24 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from '@dnd-kit/core';
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
+import { useDndContext, useDroppable } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import type { 
   ParallelSplitItem, 
-  TimelineItem, 
   DrillItem,
   PracticeGroup,
   Drill,
@@ -41,7 +27,6 @@ import { HelpTooltip } from '@/components/ui/HelpTooltip';
 
 interface ParallelGroupEditorProps {
   item: ParallelSplitItem;
-  onReorderGroup: (parallelId: string, groupId: string, items: TimelineItem[]) => void;
   onRemove: (id: string) => void;
   onUpdateDuration: (id: string, duration: string) => void;
   onUpdateVariations: (id: string, variations: string[]) => void;
@@ -69,7 +54,6 @@ function GroupColumn({
   onSaveGroupName,
   onCancelEditing,
   onEditingNameChange,
-  onReorderGroup,
   onRemove,
   onUpdateDuration,
   onUpdateVariations,
@@ -93,7 +77,6 @@ function GroupColumn({
   onSaveGroupName: () => void;
   onCancelEditing: () => void;
   onEditingNameChange: (name: string) => void;
-  onReorderGroup: (parallelId: string, groupId: string, items: TimelineItem[]) => void;
   onRemove: (id: string) => void;
   onUpdateDuration: (id: string, duration: string) => void;
   onUpdateVariations: (id: string, variations: string[]) => void;
@@ -107,25 +90,15 @@ function GroupColumn({
   onUpdateOverrides?: (id: string, overrides: Partial<Drill> | undefined) => void;
   depth: number;
 }) {
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
+  // The whole group box (header included) is a drop zone, so drills can be dragged into
+  // empty groups too. Dragging itself is handled by the single DndContext in DrillsList.
+  const { setNodeRef: setDropRef } = useDroppable({ id: group.id });
+  // Highlight whenever this group is where the dragged drill will land: over the box
+  // itself or over one of its drills
+  const { over } = useDndContext();
+  const isDropTarget = !!over && (
+    over.id === group.id || group.items.some(i => i.id === over.id)
   );
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const oldIndex = group.items.findIndex(i => i.id === active.id);
-    const newIndex = group.items.findIndex(i => i.id === over.id);
-    
-    if (oldIndex !== -1 && newIndex !== -1) {
-      const reordered = arrayMove(group.items, oldIndex, newIndex);
-      onReorderGroup(parallelId, group.id, reordered);
-    }
-  };
 
   const groupPath = [...currentPath, group.id];
 
@@ -135,7 +108,8 @@ function GroupColumn({
   
   return (
     <div 
-      className="rounded-lg border-2 flex-1"
+      ref={setDropRef}
+      className={`rounded-lg border-2 flex-1 ${isDropTarget ? 'ring-2 ring-primary-400' : ''}`}
       style={{ borderColor: group.color + '40', minWidth }}
     >
       {/* Group Header - compact for nested */}
@@ -213,58 +187,52 @@ function GroupColumn({
 
       {/* Group Content */}
       <div className={`bg-white dark:bg-gray-800 ${isNested ? 'p-1.5 min-h-[80px]' : 'p-2 min-h-[100px]'}`}>
-        {group.items.length === 0 ? (
-          <div className={`flex flex-col items-center justify-center text-center ${isNested ? 'py-4' : 'py-6'}`}>
-            <Users className={`text-gray-300 dark:text-gray-600 ${isNested ? 'w-6 h-6 mb-1' : 'w-8 h-8 mb-2'}`} />
-            <p className={`text-gray-500 dark:text-gray-400 mb-2 ${isNested ? 'text-[10px]' : 'text-xs'}`}>
-              No drills
-            </p>
-            <button
-              type="button"
-              onClick={() => onAddDrillToGroup(groupPath)}
-              className={`flex items-center gap-1 text-primary-600 hover:text-primary-700 border border-primary-300 rounded hover:bg-primary-50 dark:border-primary-700 dark:hover:bg-primary-900/30 ${isNested ? 'px-2 py-1 text-[10px]' : 'px-3 py-1.5 text-xs'}`}
-            >
-              <Plus className={isNested ? 'w-2.5 h-2.5' : 'w-3 h-3'} />
-              Add Drill
-            </button>
-          </div>
-        ) : (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={group.items.map(i => i.id)}
-              strategy={verticalListSortingStrategy}
-            >
-              <div className="space-y-2">
-                {group.items.map((groupItem, index) => (
-                  <SortableTimelineItem
-                    key={groupItem.id}
-                    item={groupItem}
-                    index={index}
-                    onRemove={onRemove}
-                    onUpdateDuration={onUpdateDuration}
-                    onUpdateVariations={onUpdateVariations}
-                    onViewDetails={onViewDetails}
-                    onReorderGroup={onReorderGroup}
-                    onAddDrillToGroup={onAddDrillToGroup}
-                    onAddNestedSplit={onAddNestedSplit}
-                    onAddGroup={onAddGroup}
-                    onRemoveGroup={onRemoveGroup}
-                    onRemoveParallelSplit={onRemoveParallelSplit}
-                    onUpdateGroupName={onUpdateGroupName}
-                    onUpdateOverrides={onUpdateOverrides}
-                    depth={depth + 1}
-                    parentPath={groupPath}
-                    compact
-                  />
-                ))}
-              </div>
-            </SortableContext>
-          </DndContext>
-        )}
+        <SortableContext
+          id={group.id}
+          items={group.items.map(i => i.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          {group.items.length === 0 ? (
+            <div className={`flex flex-col items-center justify-center text-center ${isNested ? 'py-4' : 'py-6'}`}>
+              <Users className={`text-gray-300 dark:text-gray-600 ${isNested ? 'w-6 h-6 mb-1' : 'w-8 h-8 mb-2'}`} />
+              <p className={`text-gray-500 dark:text-gray-400 mb-2 ${isNested ? 'text-[10px]' : 'text-xs'}`}>
+                No drills
+              </p>
+              <button
+                type="button"
+                onClick={() => onAddDrillToGroup(groupPath)}
+                className={`flex items-center gap-1 text-primary-600 hover:text-primary-700 border border-primary-300 rounded hover:bg-primary-50 dark:border-primary-700 dark:hover:bg-primary-900/30 ${isNested ? 'px-2 py-1 text-[10px]' : 'px-3 py-1.5 text-xs'}`}
+              >
+                <Plus className={isNested ? 'w-2.5 h-2.5' : 'w-3 h-3'} />
+                Add Drill
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {group.items.map((groupItem, index) => (
+                <SortableTimelineItem
+                  key={groupItem.id}
+                  item={groupItem}
+                  index={index}
+                  onRemove={onRemove}
+                  onUpdateDuration={onUpdateDuration}
+                  onUpdateVariations={onUpdateVariations}
+                  onViewDetails={onViewDetails}
+                  onAddDrillToGroup={onAddDrillToGroup}
+                  onAddNestedSplit={onAddNestedSplit}
+                  onAddGroup={onAddGroup}
+                  onRemoveGroup={onRemoveGroup}
+                  onRemoveParallelSplit={onRemoveParallelSplit}
+                  onUpdateGroupName={onUpdateGroupName}
+                  onUpdateOverrides={onUpdateOverrides}
+                  depth={depth + 1}
+                  parentPath={groupPath}
+                  compact
+                />
+              ))}
+            </div>
+          )}
+        </SortableContext>
         
         {/* Add buttons at bottom */}
         {group.items.length > 0 && (
@@ -294,7 +262,6 @@ function GroupColumn({
 
 export function ParallelGroupEditor({
   item,
-  onReorderGroup,
   onRemove,
   onUpdateDuration,
   onUpdateVariations,
@@ -411,7 +378,6 @@ export function ParallelGroupEditor({
                 onSaveGroupName={saveGroupName}
                 onCancelEditing={cancelEditing}
                 onEditingNameChange={setEditingName}
-                onReorderGroup={onReorderGroup}
                 onRemove={onRemove}
                 onUpdateDuration={onUpdateDuration}
                 onUpdateVariations={onUpdateVariations}

@@ -269,6 +269,139 @@ export function createParallelSplit(groupCount: number = 2): ParallelSplitItem {
   };
 }
 
+// ============================================
+// Timeline tree helpers (for drag & drop between the top level and groups)
+// A "container" is either the top-level timeline (TIMELINE_ROOT_ID) or a group id.
+// ============================================
+
+export const TIMELINE_ROOT_ID = '__timeline-root__';
+
+// Items held directly by a container, or null if no such container exists
+export function getContainerItems(timeline: TimelineItem[], containerId: string): TimelineItem[] | null {
+  if (containerId === TIMELINE_ROOT_ID) return timeline;
+  for (const item of timeline) {
+    if (item.type !== 'parallel') continue;
+    for (const group of item.groups) {
+      if (group.id === containerId) return group.items;
+      const found = getContainerItems(group.items, containerId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// Id of the container directly holding an item, or null if the item isn't in the timeline
+export function findItemContainer(
+  timeline: TimelineItem[],
+  itemId: string,
+  containerId: string = TIMELINE_ROOT_ID
+): string | null {
+  for (const item of timeline) {
+    if (item.id === itemId) return containerId;
+    if (item.type !== 'parallel') continue;
+    for (const group of item.groups) {
+      const found = findItemContainer(group.items, itemId, group.id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// Find any item (drill or split) anywhere in the timeline
+export function findTimelineItem(timeline: TimelineItem[], itemId: string): TimelineItem | null {
+  for (const item of timeline) {
+    if (item.id === itemId) return item;
+    if (item.type !== 'parallel') continue;
+    for (const group of item.groups) {
+      const found = findTimelineItem(group.items, itemId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// Id of the split that owns a group
+export function findGroupSplitId(timeline: TimelineItem[], groupId: string): string | null {
+  for (const item of timeline) {
+    if (item.type !== 'parallel') continue;
+    for (const group of item.groups) {
+      if (group.id === groupId) return item.id;
+      const found = findGroupSplitId(group.items, groupId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// Replace the items of one container
+function setContainerItems(
+  timeline: TimelineItem[],
+  containerId: string,
+  updater: (items: TimelineItem[]) => TimelineItem[]
+): TimelineItem[] {
+  if (containerId === TIMELINE_ROOT_ID) return updater(timeline);
+  return timeline.map(item => {
+    if (item.type !== 'parallel') return item;
+    return {
+      ...item,
+      groups: item.groups.map(group =>
+        group.id === containerId
+          ? { ...group, items: updater(group.items) }
+          : { ...group, items: setContainerItems(group.items, containerId, updater) }
+      ),
+    };
+  });
+}
+
+// Move an item to a position in any container (index is clamped to the container's length)
+export function moveTimelineItem(
+  timeline: TimelineItem[],
+  itemId: string,
+  toContainerId: string,
+  toIndex: number
+): TimelineItem[] {
+  const fromContainerId = findItemContainer(timeline, itemId);
+  const item = findTimelineItem(timeline, itemId);
+  if (!fromContainerId || !item) return timeline;
+  const removed = setContainerItems(timeline, fromContainerId, items => items.filter(i => i.id !== itemId));
+  return setContainerItems(removed, toContainerId, items => {
+    const index = Math.max(0, Math.min(toIndex, items.length));
+    return [...items.slice(0, index), item, ...items.slice(index)];
+  });
+}
+
+// Replace a split holding at most one item (across all its groups) with that item, or remove it
+export function dissolveSplitIfSparse(timeline: TimelineItem[], splitId: string): TimelineItem[] {
+  return timeline.flatMap(item => {
+    if (item.type !== 'parallel') return [item];
+    if (item.id === splitId) {
+      const remaining = item.groups.flatMap(g => g.items);
+      return remaining.length <= 1 ? remaining : [item];
+    }
+    return [{
+      ...item,
+      groups: item.groups.map(group => ({ ...group, items: dissolveSplitIfSparse(group.items, splitId) })),
+    }];
+  });
+}
+
+// "Run alongside": wrap an existing drill in a split, with a second drill in its own group.
+// Groups are named after each drill's category, falling back to the default names on a tie.
+export function createSplitAlongside(existing: DrillItem, alongside: DrillItem): ParallelSplitItem {
+  const split = createParallelSplit(2);
+  const existingCategory = getEffectiveDrill(existing).category;
+  const alongsideCategory = getEffectiveDrill(alongside).category;
+  const useCategoryNames = existingCategory !== alongsideCategory;
+  const [first, second] = split.groups;
+  return {
+    ...split,
+    groups: [
+      { ...first, name: useCategoryNames ? existingCategory : first.name, items: [existing] },
+      { ...second, name: useCategoryNames ? alongsideCategory : second.name, items: [alongside] },
+    ],
+  };
+}
+
 // Create a new drill item
 export function createDrillItem(drill: Drill): DrillItem {
   return {
@@ -324,6 +457,31 @@ export interface PracticePlan {
 }
 
 export const DRILL_CATEGORIES: DrillCategory[] = ['Admin', 'Conditioning', 'Skating', 'Shooting', 'Passing', 'Defensive', 'Offensive', 'Goalie', 'Small Game', 'Systems', 'Scrimmage', 'Other'];
+
+// Order drills by category (in DRILL_CATEGORIES order, which follows a practice's flow), then name
+export function compareDrillsByCategory(a: Drill, b: Drill): number {
+  const rank = (drill: Drill) => {
+    const index = DRILL_CATEGORIES.indexOf(drill.category);
+    return index === -1 ? DRILL_CATEGORIES.length : index;
+  };
+  const categoryDiff = rank(a) - rank(b);
+  if (categoryDiff !== 0) return categoryDiff;
+  return (a.name ?? '').toLowerCase().localeCompare((b.name ?? '').toLowerCase());
+}
+
+// Split an already-sorted drill list into consecutive runs of the same category
+export function groupDrillsByCategory(drills: Drill[]): { category: DrillCategory; drills: Drill[] }[] {
+  const sections: { category: DrillCategory; drills: Drill[] }[] = [];
+  for (const drill of drills) {
+    const last = sections[sections.length - 1];
+    if (last && last.category === drill.category) {
+      last.drills.push(drill);
+    } else {
+      sections.push({ category: drill.category, drills: [drill] });
+    }
+  }
+  return sections;
+}
 
 // Equipment options for drills
 export const EQUIPMENT_OPTIONS = [
@@ -453,6 +611,7 @@ export function getTagColor(tag: string): string {
     if ((tags as readonly string[]).includes(tag)) {
       return TAG_CATEGORY_COLORS[category as DrillTagCategory];
     }
+
   }
   // Default fallback color
   return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400';

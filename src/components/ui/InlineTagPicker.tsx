@@ -5,6 +5,8 @@ import { DRILL_TAG_CATEGORIES, DRILL_TAG_CATEGORY_NAMES, TAG_CATEGORY_COLORS, ge
 import type { DrillTagCategory } from '@/lib/types';
 import { X, Search, Check, ChevronLeft, ChevronRight } from 'lucide-react';
 import { HelpTooltip } from '@/components/ui/HelpTooltip';
+import { createFeedback } from '@/lib/db';
+import { useAuth } from '@/components/AuthProvider';
 
 interface InlineTagPickerProps {
   value: string[];
@@ -15,9 +17,11 @@ interface InlineTagPickerProps {
 }
 
 export function InlineTagPicker({ value, onChange, label, maxHeight = '160px', helpText }: InlineTagPickerProps) {
+  const { profile, user } = useAuth();
   const [activeCategory, setActiveCategory] = useState<DrillTagCategory>(DRILL_TAG_CATEGORY_NAMES[0]);
   const [searchQuery, setSearchQuery] = useState('');
   const [focusedTagIndex, setFocusedTagIndex] = useState(-1);
+  const [createdCustomTags, setCreatedCustomTags] = useState<string[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const tagGridRef = useRef<HTMLDivElement>(null);
   const categoryTabsRef = useRef<HTMLDivElement>(null);
@@ -26,6 +30,40 @@ export function InlineTagPicker({ value, onChange, label, maxHeight = '160px', h
   // Ensure value is always an array
   const tags = value ?? [];
   const selectedSet = useMemo(() => new Set(tags), [tags]);
+  const CUSTOM_CATEGORY = 'custom';
+
+  const knownTags = useMemo(
+    () => new Set(Object.values(DRILL_TAG_CATEGORIES).flat().map((tag) => tag.toLowerCase())),
+    []
+  );
+
+  const customTags = useMemo(() => {
+    const allCustomTags = [...createdCustomTags, ...tags.filter((tag) => !knownTags.has(tag.toLowerCase()))];
+    return Array.from(new Set(allCustomTags));
+  }, [createdCustomTags, knownTags, tags]);
+  const resolvedHelpText = helpText ?? label;
+
+  useEffect(() => {
+    if (customTags.length === 0) return;
+    setCreatedCustomTags((prev) => {
+      const merged = Array.from(new Set([...prev, ...customTags]));
+      if (merged.length === prev.length && merged.every((tag, index) => tag === prev[index])) {
+        return prev;
+      }
+      return merged;
+    });
+  }, [customTags]);
+
+  const normalizedQuery = useMemo(() => searchQuery.trim().replace(/\s+/g, ' '), [searchQuery]);
+  const allAvailableTags = useMemo(
+    () => [...Object.values(DRILL_TAG_CATEGORIES).flat(), ...customTags],
+    [customTags]
+  );
+  const existingTagMatch = useMemo(
+    () => allAvailableTags.find((tag) => tag.toLowerCase() === normalizedQuery.toLowerCase()),
+    [allAvailableTags, normalizedQuery]
+  );
+  const canCreateCustomTag = normalizedQuery.length > 0 && !existingTagMatch;
 
   // Get tags for active category, filtered by search
   const activeCategoryTags = useMemo(() => {
@@ -40,7 +78,7 @@ export function InlineTagPicker({ value, onChange, label, maxHeight = '160px', h
   const allMatchingTags = useMemo(() => {
     if (!searchQuery.trim()) return null;
     const query = searchQuery.toLowerCase();
-    const matches: { tag: string; category: DrillTagCategory }[] = [];
+    const matches: { tag: string; category: string }[] = [];
     
     for (const category of DRILL_TAG_CATEGORY_NAMES) {
       for (const tag of DRILL_TAG_CATEGORIES[category]) {
@@ -49,8 +87,14 @@ export function InlineTagPicker({ value, onChange, label, maxHeight = '160px', h
         }
       }
     }
+
+    for (const tag of customTags) {
+      if (tag.toLowerCase().includes(query)) {
+        matches.push({ tag, category: CUSTOM_CATEGORY });
+      }
+    }
     return matches;
-  }, [searchQuery]);
+  }, [customTags, searchQuery]);
 
   // Count selected tags per category for badges
   const selectedCountByCategory = useMemo(() => {
@@ -81,6 +125,30 @@ export function InlineTagPicker({ value, onChange, label, maxHeight = '160px', h
   const clearAll = useCallback(() => {
     onChange([]);
   }, [onChange]);
+
+  const createCustomTag = useCallback(async () => {
+    if (!canCreateCustomTag) return;
+
+    const newTag = normalizedQuery;
+    setCreatedCustomTags((prev) => Array.from(new Set([...prev, newTag])));
+    if (!selectedSet.has(newTag)) {
+      onChange([...tags, newTag]);
+    }
+    setSearchQuery('');
+    setFocusedTagIndex(-1);
+
+    try {
+      await createFeedback(
+        `Custom tag created: "${newTag}". Please assign it to an existing category or create a new category for it.`,
+        {
+          fullName: profile?.fullName || '',
+          userId: user?.id,
+        }
+      );
+    } catch (error) {
+      console.error('Failed to log custom tag feedback:', error);
+    }
+  }, [canCreateCustomTag, normalizedQuery, selectedSet, onChange, tags, profile?.fullName, user?.id]);
 
   // Auto-scroll to focused tag
   useEffect(() => {
@@ -133,12 +201,15 @@ export function InlineTagPicker({ value, onChange, label, maxHeight = '160px', h
       e.preventDefault();
       const tag = currentTags[focusedTagIndex];
       if (tag) toggleTag(tag);
+    } else if (e.key === 'Enter' && canCreateCustomTag) {
+      e.preventDefault();
+      void createCustomTag();
     } else if (e.key === 'Escape') {
       setSearchQuery('');
       setFocusedTagIndex(-1);
       searchInputRef.current?.blur();
     }
-  }, [activeCategoryTags, allMatchingTags, focusedTagIndex, toggleTag, searchQuery, navigateCategory]);
+  }, [activeCategoryTags, allMatchingTags, focusedTagIndex, toggleTag, searchQuery, navigateCategory, canCreateCustomTag, createCustomTag]);
 
   // Reset focused index when category or search changes
   const handleCategoryChange = useCallback((category: DrillTagCategory) => {
@@ -174,7 +245,9 @@ export function InlineTagPicker({ value, onChange, label, maxHeight = '160px', h
           <div className="block font-medium text-gray-700 dark:text-gray-300">
             {label}
           </div>
-          <HelpTooltip text="Select tags to categorize the drill. Tags can be used to filter drills in the practice picker." iconClassName="w-3 h-3" />
+          {resolvedHelpText && (
+            <HelpTooltip text="Select tags to categorize the drill. Tags can be used to filter drills in the practice picker." iconClassName="w-3 h-3" />
+          )}
         </div>
       )}
 
@@ -281,7 +354,7 @@ export function InlineTagPicker({ value, onChange, label, maxHeight = '160px', h
                 setFocusedTagIndex(-1);
               }}
               onKeyDown={handleKeyDown}
-              placeholder="Search tags..."
+              placeholder="Search or create tags..."
               className="w-24 bg-transparent text-xs text-gray-900 dark:text-white placeholder-gray-400 outline-none"
             />
             {searchQuery && (
@@ -302,6 +375,15 @@ export function InlineTagPicker({ value, onChange, label, maxHeight = '160px', h
           className="flex flex-wrap gap-1.5 p-2.5 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600"
           style={{ maxHeight }}
         >
+          {canCreateCustomTag && (
+            <button
+              type="button"
+              onClick={() => void createCustomTag()}
+              className="w-full text-left rounded-md border border-primary-300 dark:border-primary-700 bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300 px-2.5 py-1.5 text-xs font-medium hover:bg-primary-100 dark:hover:bg-primary-900/30 transition-colors"
+            >
+              Create custom tag &quot;{normalizedQuery}&quot; in {CUSTOM_CATEGORY}
+            </button>
+          )}
           {searchQuery && allMatchingTags ? (
             // Show search results across all categories
             allMatchingTags.length > 0 ? (

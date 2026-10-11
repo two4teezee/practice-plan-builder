@@ -4,7 +4,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { TimelineItem, DrillItem, Drill } from '@/lib/types';
 import { DRILL_DURATIONS, parseVariations, getEffectiveDrill, hasDrillOverrides } from '@/lib/types';
-import { GripVertical, X, ChevronDown, ChevronUp, Clock, Layers, Pencil, RotateCcw } from 'lucide-react';
+import { GripVertical, X, ChevronDown, ChevronUp, Clock, Layers, Pencil, RotateCcw, Columns2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { HelpTooltip } from '@/components/ui/HelpTooltip';
 import { useState, useRef, useEffect } from 'react';
@@ -19,7 +19,6 @@ interface SortableTimelineItemProps {
   onUpdateDuration: (id: string, duration: string) => void;
   onUpdateVariations: (id: string, variations: string[]) => void;
   onViewDetails: (item: DrillItem) => void;
-  onReorderGroup: (parallelId: string, groupId: string, items: TimelineItem[]) => void;
   onAddDrillToGroup: (groupPath: string[]) => void;
   onAddNestedSplit: (parallelId: string, groupId: string) => void;
   onAddGroup: (parallelId: string) => void;
@@ -27,6 +26,8 @@ interface SortableTimelineItemProps {
   onRemoveParallelSplit: (id: string) => void;
   onUpdateGroupName: (parallelId: string, groupId: string, name: string) => void;
   onUpdateOverrides?: (id: string, overrides: Partial<Drill> | undefined) => void;
+  // Only provided for top-level drills; drills already in a group don't get "Run alongside"
+  onRunAlongside?: (id: string) => void;
   depth?: number;
   parentPath?: string[];
   compact?: boolean;
@@ -181,7 +182,6 @@ export function SortableTimelineItem({
   onUpdateDuration,
   onUpdateVariations,
   onViewDetails,
-  onReorderGroup,
   onAddDrillToGroup,
   onAddNestedSplit,
   onAddGroup,
@@ -189,6 +189,7 @@ export function SortableTimelineItem({
   onRemoveParallelSplit,
   onUpdateGroupName,
   onUpdateOverrides,
+  onRunAlongside,
   depth = 0,
   parentPath = [],
   compact = false,
@@ -225,7 +226,6 @@ export function SortableTimelineItem({
           <div className="flex-1">
             <ParallelGroupEditor
               item={item}
-              onReorderGroup={onReorderGroup}
               onRemove={onRemove}
               onUpdateDuration={onUpdateDuration}
               onUpdateVariations={onUpdateVariations}
@@ -499,6 +499,18 @@ export function SortableTimelineItem({
             title="Reset to library version"
           >
             <RotateCcw className="w-4 h-4" />
+          </Button>
+        )}
+
+        {/* Run another drill at the same time (e.g. a goalie drill during a skating drill) */}
+        {onRunAlongside && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => onRunAlongside(drillItem.id)}
+            title="Run another drill alongside this one"
+          >
+            <Columns2 className="w-4 h-4" />
           </Button>
         )}
 

@@ -27,6 +27,57 @@ const inputStyle = {
   paddingRight: '0.5rem',
 };
 
+// Field wrapper with reset button. Defined at module level so React keeps the
+// wrapped inputs mounted (and focused) across re-renders.
+function FieldWrapper({
+  label,
+  helpText,
+  modified,
+  onReset,
+  children,
+}: {
+  label: string;
+  helpText?: string;
+  modified: boolean;
+  onReset: () => void;
+  children: React.ReactNode;
+}) {
+  const resolvedHelpText = helpText ?? label;
+  return (
+    <div className="relative">
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="block font-medium text-gray-700 dark:text-gray-300" style={labelStyle}>
+            {label}
+          </span>
+          {resolvedHelpText && (
+            <HelpTooltip text={resolvedHelpText} iconClassName="w-3 h-3" />
+          )}
+          {modified && (
+            <span className="ml-1 text-amber-600 dark:text-amber-400 text-[10px]">
+              (modified)
+            </span>
+          )}
+        </div>
+        {modified && (
+          <button
+            type="button"
+            onClick={onReset}
+            className="text-xs text-gray-500 hover:text-primary-600 dark:text-gray-400 dark:hover:text-primary-400 flex items-center gap-1"
+            title="Reset to library version"
+          >
+            <RotateCcw className="w-3 h-3" />
+            Reset
+          </button>
+        )}
+      </div>
+      <div className={modified ? 'ring-2 ring-amber-500/30 rounded-lg' : ''}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function PracticeDrillEditModal({ 
   isOpen, 
   onClose, 
@@ -102,55 +153,6 @@ export function PracticeDrillEditModal({
 
   const inputClasses = "w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500";
 
-  // Field wrapper with reset button
-  const FieldWrapper = ({ 
-    field, 
-    label, 
-    helpText,
-    children 
-  }: { 
-    field: keyof Drill; 
-    label: string; 
-    helpText?: string;
-    children: React.ReactNode;
-  }) => {
-    const modified = isFieldModified(field);
-    const resolvedHelpText = helpText ?? label;
-    return (
-      <div className="relative">
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="block font-medium text-gray-700 dark:text-gray-300" style={labelStyle}>
-              {label}
-            </span>
-            {resolvedHelpText && (
-              <HelpTooltip text={resolvedHelpText} iconClassName="w-3 h-3" />
-            )}
-            {modified && (
-              <span className="ml-1 text-amber-600 dark:text-amber-400 text-[10px]">
-                (modified)
-              </span>
-            )}
-          </div>
-          {modified && (
-            <button
-              type="button"
-              onClick={() => resetField(field)}
-              className="text-xs text-gray-500 hover:text-primary-600 dark:text-gray-400 dark:hover:text-primary-400 flex items-center gap-1"
-              title="Reset to library version"
-            >
-              <RotateCcw className="w-3 h-3" />
-              Reset
-            </button>
-          )}
-        </div>
-        <div className={modified ? 'ring-2 ring-amber-500/30 rounded-lg' : ''}>
-          {children}
-        </div>
-      </div>
-    );
-  };
-
   return (
     <Modal
       isOpen={isOpen}
@@ -171,7 +173,7 @@ export function PracticeDrillEditModal({
         <div className="grid grid-cols-2 gap-4">
           {/* Left column: Text fields */}
           <div className="flex flex-col gap-3">
-            <FieldWrapper field="setup" label="Setup" helpText="How to set up the drill">
+            <FieldWrapper modified={isFieldModified('setup')} onReset={() => resetField('setup')} label="Setup" helpText="How to set up the drill">
               <textarea
                 value={effectiveDrill.setup}
                 onChange={(e) => updateField('setup', e.target.value)}
@@ -182,7 +184,7 @@ export function PracticeDrillEditModal({
               />
             </FieldWrapper>
 
-            <FieldWrapper field="coachingPoints" label="Coaching Points" helpText="Key points for coaches">
+            <FieldWrapper modified={isFieldModified('coachingPoints')} onReset={() => resetField('coachingPoints')} label="Coaching Points" helpText="Key points for coaches">
               <textarea
                 value={effectiveDrill.coachingPoints}
                 onChange={(e) => updateField('coachingPoints', e.target.value)}
@@ -197,7 +199,7 @@ export function PracticeDrillEditModal({
 
           {/* Right column: Sketch */}
           <div className="flex flex-col">
-            <FieldWrapper field="sketchData" label="Drill Sketch">
+            <FieldWrapper modified={isFieldModified('sketchData')} onReset={() => resetField('sketchData')} label="Drill Sketch">
               <div className="flex flex-col rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 overflow-hidden h-[280px]">
                 {/* Sketch preview area */}
                 <div className="flex-1 relative">
