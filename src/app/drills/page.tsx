@@ -5,7 +5,8 @@ import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { useAuth } from '@/components/AuthProvider';
 import { getDrills, getDrillByName, getDrillWithAuditInfo, createDrill, updateDrill, deleteDrill } from '@/lib/db';
 import type { Drill, DrillCategory } from '@/lib/types';
-import { DRILL_CATEGORIES, DRILL_TAG_CATEGORIES, DRILL_TAG_CATEGORY_NAMES, getTagColor } from '@/lib/types';
+import { DRILL_CATEGORIES, DRILL_TAG_CATEGORIES, DRILL_TAG_CATEGORY_NAMES, getTagColor, compareDrillsByCategory, groupDrillsByCategory } from '@/lib/types';
+import { DrillCategoryHeader } from '@/components/drills/DrillCategoryHeader';
 import { DrillCard } from '@/components/drills/DrillCard';
 import { DrillForm } from '@/components/drills/DrillForm';
 import { Modal } from '@/components/ui/Modal';
@@ -18,9 +19,9 @@ import { LAYOUT_STYLES } from '@/lib/layoutConfig';
 const FILTER_STORAGE_KEY = 'drills-filter';
 const SORT_STORAGE_KEY = 'drills-sort';
 const SORT_OPTIONS = [
+  { value: 'category-asc', label: 'Category' },
   { value: 'name-asc', label: 'Name (A–Z)' },
   { value: 'name-desc', label: 'Name (Z–A)' },
-  { value: 'category-asc', label: 'Category (A–Z)' },
   { value: 'updated-desc', label: 'Recently Updated' },
   { value: 'created-desc', label: 'Recently Created' },
 ] as const;
@@ -48,7 +49,7 @@ export default function DrillsPage() {
   const [drills, setDrills] = useState<Drill[]>([]);
   const [isLoadingDrills, setIsLoadingDrills] = useState(true);
   const [cardLayout, setCardLayout] = useState<'rect' | 'square'>('rect');
-  const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'category-asc' | 'updated-desc' | 'created-desc'>('name-asc');
+  const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'category-asc' | 'updated-desc' | 'created-desc'>('category-asc');
 
   // Filter tags by category based on search
   const filteredTagCategories = useMemo(() => {
@@ -225,7 +226,6 @@ export default function DrillsPage() {
     if (!filteredDrills) return [];
     const drillsToSort = [...filteredDrills];
     const getName = (drill: Drill) => drill.name?.toLowerCase() ?? '';
-    const getCategory = (drill: Drill) => drill.category?.toLowerCase() ?? '';
     const getTime = (value?: Date | string | null) => (value ? new Date(value).getTime() : 0);
 
     drillsToSort.sort((a, b) => {
@@ -234,11 +234,8 @@ export default function DrillsPage() {
           return getName(a).localeCompare(getName(b));
         case 'name-desc':
           return getName(b).localeCompare(getName(a));
-        case 'category-asc': {
-          const categoryCompare = getCategory(a).localeCompare(getCategory(b));
-          if (categoryCompare !== 0) return categoryCompare;
-          return getName(a).localeCompare(getName(b));
-        }
+        case 'category-asc':
+          return compareDrillsByCategory(a, b);
         case 'updated-desc': {
           const updatedDiff = getTime(b.updatedAt) - getTime(a.updatedAt);
           if (updatedDiff !== 0) return updatedDiff;
@@ -256,6 +253,19 @@ export default function DrillsPage() {
 
     return drillsToSort;
   }, [filteredDrills, sortBy]);
+
+  const drillGridClass = cardLayout === 'square'
+    ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4'
+    : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3';
+
+  const renderDrillCard = (drill: Drill) => (
+    <DrillCard
+      key={drill.id}
+      drill={drill}
+      onClick={handleCardClick}
+      cardLayout={cardLayout}
+    />
+  );
 
   const handleSave = async (drillData: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>) => {
     try {
@@ -737,22 +747,26 @@ export default function DrillsPage() {
           <p className="text-gray-500 dark:text-gray-400">Loading drills...</p>
         </div>
       ) : sortedDrills && sortedDrills.length > 0 ? (
-        <div
-          className={
-            cardLayout === 'square'
-              ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4'
-              : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3'
-          }
-        >
-          {sortedDrills.map((drill) => (
-            <DrillCard
-              key={drill.id}
-              drill={drill}
-              onClick={handleCardClick}
-              cardLayout={cardLayout}
-            />
-          ))}
-        </div>
+        sortBy === 'category-asc' ? (
+          <div className="space-y-4">
+            {groupDrillsByCategory(sortedDrills).map((section) => (
+              <section key={section.category}>
+                <DrillCategoryHeader
+                  category={section.category}
+                  count={section.drills.length}
+                  className="bg-gray-50 dark:bg-gray-950 mb-1"
+                />
+                <div className={drillGridClass}>
+                  {section.drills.map(renderDrillCard)}
+                </div>
+              </section>
+            ))}
+          </div>
+        ) : (
+          <div className={drillGridClass}>
+            {sortedDrills.map(renderDrillCard)}
+          </div>
+        )
       ) : (
         <div className="text-center py-8 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800">
           <Library className="w-10 h-10 text-gray-400 mx-auto mb-3" />

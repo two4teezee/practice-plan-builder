@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { getDrills } from '@/lib/db';
-import { DRILL_CATEGORIES, DRILL_TAG_CATEGORIES, DRILL_TAG_CATEGORY_NAMES, getTagColor } from '@/lib/types';
+import { DRILL_CATEGORIES, DRILL_TAG_CATEGORIES, DRILL_TAG_CATEGORY_NAMES, getTagColor, compareDrillsByCategory, groupDrillsByCategory } from '@/lib/types';
+import { DrillCategoryHeader } from '@/components/drills/DrillCategoryHeader';
 import type { Drill, DrillCategory } from '@/lib/types';
 import { Input } from '@/components/ui/Input';
 import { HelpTooltip } from '@/components/ui/HelpTooltip';
@@ -13,9 +14,9 @@ import { Search, Plus, Clock, Filter, X, Check, ChevronDown, Eye, ArrowUpDown } 
 const PICKER_FILTER_KEY = 'drill-picker-filter';
 const PICKER_SORT_KEY = 'drill-picker-sort';
 const SORT_OPTIONS = [
+  { value: 'category-asc', label: 'Category' },
   { value: 'name-asc', label: 'Name (A–Z)' },
   { value: 'name-desc', label: 'Name (Z–A)' },
-  { value: 'category-asc', label: 'Category (A–Z)' },
   { value: 'updated-desc', label: 'Recently Updated' },
   { value: 'created-desc', label: 'Recently Created' },
 ] as const;
@@ -43,7 +44,7 @@ export function DrillPicker({ onAdd, onPreview }: DrillPickerProps) {
   const [isLoaded, setIsLoaded] = useState(false);
   const [drills, setDrills] = useState<Drill[]>([]);
   const [isLoadingDrills, setIsLoadingDrills] = useState(true);
-  const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'category-asc' | 'updated-desc' | 'created-desc'>('name-asc');
+  const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'category-asc' | 'updated-desc' | 'created-desc'>('category-asc');
 
   // Filter tags by category based on search
   const filteredTagCategories = useMemo(() => {
@@ -211,7 +212,6 @@ export function DrillPicker({ onAdd, onPreview }: DrillPickerProps) {
     if (!filteredDrills) return [];
     const drillsToSort = [...filteredDrills];
     const getName = (drill: Drill) => drill.name?.toLowerCase() ?? '';
-    const getCategory = (drill: Drill) => drill.category?.toLowerCase() ?? '';
     const getTime = (value?: Date | string | null) => (value ? new Date(value).getTime() : 0);
 
     drillsToSort.sort((a, b) => {
@@ -220,11 +220,8 @@ export function DrillPicker({ onAdd, onPreview }: DrillPickerProps) {
           return getName(a).localeCompare(getName(b));
         case 'name-desc':
           return getName(b).localeCompare(getName(a));
-        case 'category-asc': {
-          const categoryCompare = getCategory(a).localeCompare(getCategory(b));
-          if (categoryCompare !== 0) return categoryCompare;
-          return getName(a).localeCompare(getName(b));
-        }
+        case 'category-asc':
+          return compareDrillsByCategory(a, b);
         case 'updated-desc': {
           const updatedDiff = getTime(b.updatedAt) - getTime(a.updatedAt);
           if (updatedDiff !== 0) return updatedDiff;
@@ -266,6 +263,49 @@ export function DrillPicker({ onAdd, onPreview }: DrillPickerProps) {
     Scrimmage: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400',
     Other: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400',
   };
+
+  const renderDrillCard = (drill: Drill) => (
+    <Card key={drill.id} className="p-3">
+      <div className="flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <h4 className="font-medium text-sm text-gray-900 dark:text-white truncate">
+              {drill.name}
+            </h4>
+            <span className={`px-2 py-0.5 text-xs font-medium rounded ${categoryBadgeColors[drill.category]}`}>
+              {drill.category}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+            <div className="flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              <span>{drill.duration}</span>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          {onPreview && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onPreview(drill)}
+              title="Preview drill"
+            >
+              <Eye className="w-4 h-4" />
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => onAdd(drill)}
+          >
+            <Plus className="w-4 h-4" />
+            Add
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
 
   return (
     <div className="h-full flex flex-col">
@@ -528,48 +568,20 @@ export function DrillPicker({ onAdd, onPreview }: DrillPickerProps) {
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600 mx-auto mb-2"></div>
             <p className="text-sm text-gray-500 dark:text-gray-400">Loading drills...</p>
           </div>
-        ) : sortedDrills.map((drill) => (
-            <Card key={drill.id} className="p-3">
-              <div className="flex items-center gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h4 className="font-medium text-sm text-gray-900 dark:text-white truncate">
-                      {drill.name}
-                    </h4>
-                    <span className={`px-2 py-0.5 text-xs font-medium rounded ${categoryBadgeColors[drill.category]}`}>
-                      {drill.category}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      <span>{drill.duration}</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1">
-                  {onPreview && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => onPreview(drill)}
-                      title="Preview drill"
-                    >
-                      <Eye className="w-4 h-4" />
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={() => onAdd(drill)}
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add
-                  </Button>
-                </div>
-              </div>
-            </Card>
-          ))}
+        ) : sortBy === 'category-asc' ? (
+          groupDrillsByCategory(sortedDrills).map((section) => (
+            <div key={section.category} className="space-y-2">
+              <DrillCategoryHeader
+                category={section.category}
+                count={section.drills.length}
+                className="bg-white dark:bg-gray-900"
+              />
+              {section.drills.map(renderDrillCard)}
+            </div>
+          ))
+        ) : (
+          sortedDrills.map(renderDrillCard)
+        )}
         {!isLoadingDrills && sortedDrills.length === 0 && (
           <div className="text-center py-8 text-gray-500 dark:text-gray-400">
             No drills found

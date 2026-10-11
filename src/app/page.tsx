@@ -21,7 +21,7 @@ import type {
   EquipmentOption,
   Location,
 } from '@/lib/types';
-import type { TimelineItem } from '@/lib/types';
+import type { DrillItem, TimelineItem } from '@/lib/types';
 import {
   PRACTICE_DURATIONS, 
   DRILL_TAG_CATEGORIES,
@@ -36,6 +36,7 @@ import {
   convertTimelineToDrills,
   createDrillItem,
   createParallelSplit,
+  createSplitAlongside,
   addGroupToSplit,
   removeGroupFromSplit,
 } from '@/lib/types';
@@ -144,6 +145,8 @@ export default function CreatePracticePlanPage() {
   
   // For drill picker context - which group to add drills to (null = main timeline)
   const [activeGroupPath, setActiveGroupPath] = useState<string[] | null>(null);
+  // For "Run alongside" - the top-level drill the picked drill will run alongside
+  const [alongsideDrillId, setAlongsideDrillId] = useState<string | null>(null);
 
   // Drill preview modal state
   const [previewDrill, setPreviewDrill] = useState<Drill | null>(null);
@@ -600,6 +603,16 @@ export default function CreatePracticePlanPage() {
   const handleAddDrill = (drill: Drill) => {
     if (!drill.id) return;
     const newDrillItem = createDrillItem(drill);
+    if (alongsideDrillId) {
+      // Only now does the drill become a split, so cancelling the picker changes nothing
+      setTimeline(prev => prev.map(item =>
+        item.id === alongsideDrillId && item.type === 'drill'
+          ? createSplitAlongside(item, newDrillItem)
+          : item
+      ));
+      handleClosePicker();
+      return;
+    }
     setTimeline(prev => addItemToTimeline(prev, newDrillItem, activeGroupPath));
   };
 
@@ -609,24 +622,6 @@ export default function CreatePracticePlanPage() {
 
   const handleReorderTimeline = (reorderedItems: TimelineItem[]) => {
     setTimeline(reorderedItems);
-  };
-
-  // Reorder items within a specific group
-  const handleReorderGroup = (parallelId: string, groupId: string, reorderedItems: TimelineItem[]) => {
-    setTimeline(prev => prev.map(item => {
-      if (item.id === parallelId && item.type === 'parallel') {
-        return {
-          ...item,
-          groups: item.groups.map(group => {
-            if (group.id === groupId) {
-              return { ...group, items: reorderedItems };
-            }
-            return group;
-          })
-        };
-      }
-      return item;
-    }));
   };
 
   const handleUpdateDuration = (id: string, duration: string) => {
@@ -728,8 +723,28 @@ export default function CreatePracticePlanPage() {
   // Open drill picker for a specific group
   const handleOpenPickerForGroup = (groupPath: string[] | null) => {
     setActiveGroupPath(groupPath);
+    setAlongsideDrillId(null);
     setIsPickerOpen(true);
   };
+
+  // Open drill picker to pick a drill to run alongside a top-level drill
+  const handleRunAlongside = (drillItemId: string) => {
+    setActiveGroupPath(null);
+    setAlongsideDrillId(drillItemId);
+    setIsPickerOpen(true);
+  };
+
+  const handleClosePicker = () => {
+    setIsPickerOpen(false);
+    setAlongsideDrillId(null);
+  };
+
+  const alongsideDrill = alongsideDrillId
+    ? timeline.find((item): item is DrillItem => item.id === alongsideDrillId && item.type === 'drill')
+    : undefined;
+  const alongsideDrillTitle = alongsideDrill
+    ? `Run alongside "${alongsideDrill.drill.name}"`
+    : 'Add Drill to Practice';
 
   // Helper to add the default "Setup Ice and Warm Ups" drill
   const addDefaultSetupDrill = useCallback(async () => {
@@ -1223,7 +1238,6 @@ export default function CreatePracticePlanPage() {
               <DrillsList
                 timeline={timeline}
                 onReorder={handleReorderTimeline}
-                onReorderGroup={handleReorderGroup}
                 onRemove={handleRemoveDrill}
                 onUpdateDuration={handleUpdateDuration}
                 onUpdateVariations={handleUpdateVariations}
@@ -1236,6 +1250,7 @@ export default function CreatePracticePlanPage() {
                 onRemoveParallelSplit={handleRemoveParallelSplit}
                 onUpdateGroupName={handleUpdateGroupName}
                 onUpdateOverrides={handleUpdateOverrides}
+                onRunAlongside={handleRunAlongside}
               />
             </div>
           </Card>
@@ -1250,8 +1265,8 @@ export default function CreatePracticePlanPage() {
       {/* Drill Picker Modal */}
       <Modal
         isOpen={isPickerOpen}
-        onClose={() => setIsPickerOpen(false)}
-        title="Add Drill to Practice"
+        onClose={handleClosePicker}
+        title={alongsideDrillTitle}
         size="fixed"
       >
         <DrillPicker onAdd={handleAddDrill} onPreview={setPreviewDrill} />
