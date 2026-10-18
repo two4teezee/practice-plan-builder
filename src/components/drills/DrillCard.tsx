@@ -6,6 +6,7 @@ import { getTagColor } from '@/lib/types';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Plus, ExternalLink } from 'lucide-react';
+import { getSketchImagePreview } from '@/lib/sketch';
 
 interface DrillCardProps {
   drill: Drill;
@@ -14,16 +15,6 @@ interface DrillCardProps {
   showAddButton?: boolean;
   cardLayout?: 'rect' | 'square';
   maxTags?: number;
-}
-
-function getSketchImagePreview(sketchData?: string): string | null {
-  if (!sketchData) return null;
-  try {
-    const data = JSON.parse(sketchData);
-    return data.imagePreview || null;
-  } catch {
-    return null;
-  }
 }
 
 export function DrillCard({
@@ -64,7 +55,7 @@ export function DrillCard({
     e.stopPropagation();
   };
 
-  const sketchImage = getSketchImagePreview(drill.sketchData);
+  const sketchImage = drill.sketchThumbnail || getSketchImagePreview(drill.sketchData);
   const hasSketchThumbnail = !!sketchImage;
 
   const tagsBlock = drill.tags && drill.tags.length > 0 && (

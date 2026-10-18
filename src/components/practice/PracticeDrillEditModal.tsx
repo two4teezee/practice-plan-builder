@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { DrillSketchModal } from '@/components/drills/DrillSketchModal';
@@ -8,6 +8,8 @@ import type { Drill, DrillItem } from '@/lib/types';
 import { getEffectiveDrill, hasDrillOverrides, getOverriddenFields } from '@/lib/types';
 import { Save, X, RotateCcw, Pencil, AlertCircle } from 'lucide-react';
 import { HelpTooltip } from '@/components/ui/HelpTooltip';
+import { getDrill } from '@/lib/db';
+import { getSketchImagePreview } from '@/lib/sketch';
 
 interface PracticeDrillEditModalProps {
   isOpen: boolean;
@@ -92,11 +94,28 @@ export function PracticeDrillEditModal({
   const [isSketchModalOpen, setIsSketchModalOpen] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
+  // Drills picked from the library carry only a thumbnail; load the full library sketch
+  // when the editor opens so it can be shown and edited from. '' means the drill has none.
+  const [librarySketch, setLibrarySketch] = useState<string | undefined>(undefined);
+  const needsLibrarySketch = !drillItem.drill.sketchData && librarySketch === undefined;
+  useEffect(() => {
+    if (!isOpen || !needsLibrarySketch) return;
+    let cancelled = false;
+    getDrill(drillItem.drillId)
+      .then(full => { if (!cancelled) setLibrarySketch(full?.sketchData ?? ''); })
+      .catch(error => console.error('Failed to load library sketch:', error));
+    return () => { cancelled = true; };
+  }, [isOpen, needsLibrarySketch, drillItem.drillId]);
+  const isLoadingSketch = isOpen && needsLibrarySketch;
+  const libraryItem: DrillItem = librarySketch
+    ? { ...drillItem, drill: { ...drillItem.drill, sketchData: librarySketch } }
+    : drillItem;
+
   // Reset local state when modal opens with new drill
-  const effectiveDrill = getEffectiveDrill({ ...drillItem, overrides: localOverrides });
-  const originalDrill = drillItem.drill;
+  const effectiveDrill = getEffectiveDrill({ ...libraryItem, overrides: localOverrides });
+  const originalDrill = libraryItem.drill;
   const hasOverrides = Object.keys(localOverrides).length > 0;
-  const overriddenFields = getOverriddenFields({ ...drillItem, overrides: localOverrides });
+  const overriddenFields = getOverriddenFields({ ...libraryItem, overrides: localOverrides });
 
   // Check if a field has been modified
   const isFieldModified = (field: keyof Drill) => overriddenFields.includes(field);
@@ -139,17 +158,13 @@ export function PracticeDrillEditModal({
     updateField('sketchData', sketchData);
   };
 
-  // Get sketch preview URL
+  // Sketch preview: this practice's sketch, else the library's (its thumbnail while loading)
+  const hasSketchOverride = 'sketchData' in localOverrides;
   const sketchPreviewUrl = useMemo(() => {
-    const sketchData = effectiveDrill.sketchData;
-    if (!sketchData) return null;
-    try {
-      const parsed = JSON.parse(sketchData);
-      return parsed.imagePreview || null;
-    } catch {
-      return sketchData.startsWith('data:') ? sketchData : null;
-    }
-  }, [effectiveDrill.sketchData]);
+    const preview = getSketchImagePreview(effectiveDrill.sketchData);
+    if (preview || hasSketchOverride) return preview;
+    return originalDrill.sketchThumbnail || null;
+  }, [effectiveDrill.sketchData, hasSketchOverride, originalDrill.sketchThumbnail]);
 
   const inputClasses = "w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500";
 
@@ -228,9 +243,12 @@ export function PracticeDrillEditModal({
                     onClick={() => setIsSketchModalOpen(true)}
                     className="w-full"
                     size="sm"
+                    disabled={isLoadingSketch && !hasSketchOverride}
                   >
                     <Pencil className="w-4 h-4" />
-                    {effectiveDrill.sketchData ? 'Edit Sketch' : 'Create Sketch'}
+                    {isLoadingSketch && !hasSketchOverride
+                      ? 'Loading sketch...'
+                      : effectiveDrill.sketchData ? 'Edit Sketch' : 'Create Sketch'}
                   </Button>
                 </div>
               </div>

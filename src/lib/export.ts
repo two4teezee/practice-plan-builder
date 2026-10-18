@@ -3,6 +3,8 @@ import type { PracticePlan, Drill, TimelineItem, DrillItem, ParallelSplitItem, P
 import { getTimelineItemDuration, secondsToDurationString, flattenTimelineDrills, getEffectiveDrill } from './types';
 import { format } from 'date-fns';
 import { refreshPlanDrillData } from './db';
+import type { AttendanceSheet, AttendanceSheetPerson } from './attendance';
+import { buildAttendanceSheet, attendanceSummary, positionLabel } from './attendance';
 
 // Helper to extract image preview and aspect ratio from sketch data
 interface SketchInfo {
@@ -361,6 +363,136 @@ function renderSplitToPDF(cursor: PdfCursor, split: ParallelSplitItem, left: num
 }
 
 // Plans saved before timelines existed only have the flat drills list
+// ============================================
+// Attendance table: one column per group, staff at the top of each
+// ============================================
+
+const ATTENDANCE_FONT_SIZE = 7.5;
+const ATTENDANCE_HEADER_HEIGHT = 4.6;
+const ATTENDANCE_ROW_HEIGHT = 3.4;
+const ATTENDANCE_ROW_BASELINE = 2.5; // From a row's top to its baseline
+const ATTENDANCE_CELL_PAD = 1.5;
+const ATTENDANCE_SPREAD_THRESHOLD = 6; // A lone column longer than this is spread over 3
+const HEADER_FILL: Rgb = { r: 243, g: 244, b: 246 };
+const SIDE_COLORS: Record<string, Rgb> = {
+  Home: { r: 29, g: 78, b: 216 },
+  Away: { r: 180, g: 83, b: 9 },
+  'N/A': { r: 156, g: 163, b: 175 },
+};
+const MUTED_TEXT: Rgb = { r: 107, g: 114, b: 128 };
+
+// Shorten text with "..." until it fits the width at the current font
+function fitText(doc: jsPDF, text: string, maxWidth: number): string {
+  if (doc.getTextWidth(text) <= maxWidth) return text;
+  let fitted = text;
+  while (fitted.length > 1 && doc.getTextWidth(`${fitted}...`) > maxWidth) {
+    fitted = fitted.slice(0, -1);
+  }
+  return `${fitted.trimEnd()}...`;
+}
+
+function renderAttendanceToPDF(cursor: PdfCursor, sheet: AttendanceSheet) {
+  const doc = cursor.doc;
+  const tableWidth = cursor.pageWidth - MARGIN_X * 2;
+
+  // Header labels are fixed first so a spread column keeps its full count
+  let columns: { header: string; people: AttendanceSheetPerson[] }[] = sheet.columns.map(column => ({
+    header: `${column.name} (${column.people.length})`,
+    people: column.people,
+  }));
+  if (columns.length === 1 && columns[0].people.length > ATTENDANCE_SPREAD_THRESHOLD) {
+    const [only] = columns;
+    const perColumn = Math.ceil(only.people.length / 3);
+    columns = [0, 1, 2]
+      .map(i => ({ header: i === 0 ? only.header : '', people: only.people.slice(i * perColumn, (i + 1) * perColumn) }))
+      .filter(column => column.people.length > 0);
+  }
+
+  const columnWidth = tableWidth / columns.length;
+  const rowCount = Math.max(...columns.map(column => column.people.length));
+  const bodyHeight = rowCount * ATTENDANCE_ROW_HEIGHT + 1;
+
+  doc.setFontSize(ATTENDANCE_FONT_SIZE);
+  doc.setFont('helvetica', 'normal');
+  const absentLines: string[] = sheet.absent.length > 0
+    ? doc.splitTextToSize(`Absent (${sheet.absent.length}): ${sheet.absent.join(', ')}`, tableWidth)
+    : [];
+
+  const titleHeight = 2;
+  const absentHeight = absentLines.length > 0 ? 3.5 + absentLines.length * LINE_HEIGHT : 0;
+  cursor.ensureSpace(titleHeight + ATTENDANCE_HEADER_HEIGHT + bodyHeight + absentHeight + 2);
+
+  // Title, styled like the Equipment line
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Attendance: ', MARGIN_X, cursor.y);
+  const labelWidth = doc.getTextWidth('Attendance: ');
+  doc.setFont('helvetica', 'normal');
+  doc.text(attendanceSummary(sheet), MARGIN_X + labelWidth, cursor.y);
+  cursor.y += titleHeight;
+
+  // Grid
+  const top = cursor.y;
+  const tableHeight = ATTENDANCE_HEADER_HEIGHT + bodyHeight;
+  doc.setFillColor(HEADER_FILL.r, HEADER_FILL.g, HEADER_FILL.b);
+  doc.rect(MARGIN_X, top, tableWidth, ATTENDANCE_HEADER_HEIGHT, 'F');
+  doc.setDrawColor(DIVIDER_COLOR.r, DIVIDER_COLOR.g, DIVIDER_COLOR.b);
+  doc.setLineWidth(0.2);
+  doc.rect(MARGIN_X, top, tableWidth, tableHeight);
+  doc.line(MARGIN_X, top + ATTENDANCE_HEADER_HEIGHT, MARGIN_X + tableWidth, top + ATTENDANCE_HEADER_HEIGHT);
+
+  columns.forEach((column, columnIndex) => {
+    const x = MARGIN_X + columnIndex * columnWidth;
+    const innerWidth = columnWidth - ATTENDANCE_CELL_PAD * 2;
+    if (columnIndex > 0) {
+      doc.setDrawColor(DIVIDER_COLOR.r, DIVIDER_COLOR.g, DIVIDER_COLOR.b);
+      doc.line(x, top, x, top + tableHeight);
+    }
+
+    doc.setFontSize(ATTENDANCE_FONT_SIZE);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(55, 65, 81);
+    doc.text(fitText(doc, column.header, innerWidth), x + ATTENDANCE_CELL_PAD, top + 3.2);
+
+    column.people.forEach((person, rowIndex) => {
+      const rowTop = top + ATTENDANCE_HEADER_HEIGHT + 0.5 + rowIndex * ATTENDANCE_ROW_HEIGHT;
+      const baseline = rowTop + ATTENDANCE_ROW_BASELINE;
+
+      // Line between the staff and the players below them
+      const previous = column.people[rowIndex - 1];
+      if (previous?.isStaff && !person.isStaff) {
+        doc.setDrawColor(DIVIDER_COLOR.r, DIVIDER_COLOR.g, DIVIDER_COLOR.b);
+        doc.line(x + ATTENDANCE_CELL_PAD, rowTop, x + columnWidth - ATTENDANCE_CELL_PAD, rowTop);
+      }
+
+      // Right-hand cell: the role for staff, the side for players
+      const rightText = person.isStaff ? positionLabel(person.position) : person.side ?? 'N/A';
+      const rightColor = person.isStaff ? MUTED_TEXT : SIDE_COLORS[rightText];
+      doc.setFont('helvetica', person.isStaff ? 'italic' : 'bold');
+      const rightWidth = doc.getTextWidth(rightText);
+      doc.setTextColor(rightColor.r, rightColor.g, rightColor.b);
+      doc.text(rightText, x + columnWidth - ATTENDANCE_CELL_PAD, baseline, { align: 'right' });
+
+      const nameText = person.position === 'Goalie' ? `${person.name} (G)` : person.name;
+      doc.setFont('helvetica', person.isStaff ? 'bold' : 'normal');
+      doc.setTextColor(17, 24, 39);
+      doc.text(fitText(doc, nameText, innerWidth - rightWidth - 1.5), x + ATTENDANCE_CELL_PAD, baseline);
+    });
+  });
+
+  cursor.y = top + tableHeight;
+  if (absentLines.length > 0) {
+    cursor.y += 3.5;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(ATTENDANCE_FONT_SIZE);
+    doc.setTextColor(MUTED_TEXT.r, MUTED_TEXT.g, MUTED_TEXT.b);
+    doc.text(absentLines, MARGIN_X, cursor.y);
+    cursor.y += (absentLines.length - 1) * LINE_HEIGHT;
+  }
+  doc.setTextColor(0, 0, 0);
+  cursor.y += 3;
+}
+
 function getPlanTimeline(plan: PracticePlan): TimelineItem[] {
   if (plan.timeline && plan.timeline.length > 0) return plan.timeline;
   return plan.drills.map((item): DrillItem => ({
@@ -411,6 +543,12 @@ async function buildPracticePlanPDF(plan: PracticePlan): Promise<jsPDF> {
     const eqText = doc.splitTextToSize(normalizedPlan.equipment, pageWidth - MARGIN_X * 2 - labelWidth);
     doc.text(eqText, MARGIN_X + labelWidth, cursor.y);
     cursor.y += eqText.length * LINE_HEIGHT + 2;
+  }
+
+  const attendanceSheet = buildAttendanceSheet(normalizedPlan.attendance);
+  if (attendanceSheet) {
+    cursor.y += 1;
+    renderAttendanceToPDF(cursor, attendanceSheet);
   }
 
   // Divider line

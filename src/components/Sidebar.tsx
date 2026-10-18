@@ -6,6 +6,7 @@ import {
   ClipboardList, 
   Library, 
   History, 
+  Users,
   Sun, 
   Moon,
   Menu,
@@ -30,11 +31,32 @@ const navItems = [
     icon: Library,
   },
   {
+    name: 'Team Manager',
+    href: '/teams',
+    icon: Users,
+  },
+  {
     name: 'Previous Plans',
     href: '/history',
     icon: History,
   },
 ];
+
+// Shared look for every icon in the rail
+const railItemClass = 'group relative flex items-center justify-center w-12 h-12 rounded-xl transition-all duration-200';
+const railIdleClass = 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white';
+
+// Label that appears to the right of a rail icon on hover or keyboard focus
+function RailTooltip({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      role="tooltip"
+      className="pointer-events-none absolute left-full ml-3 top-1/2 -translate-y-1/2 z-50 whitespace-nowrap rounded-lg bg-gray-900 dark:bg-gray-700 px-2.5 py-1.5 text-xs font-medium text-white shadow-lg opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity"
+    >
+      {children}
+    </span>
+  );
+}
 
 interface SidebarProps {
   onFeedbackClick?: () => void;
@@ -90,35 +112,30 @@ export function Sidebar({ onFeedbackClick }: SidebarProps) {
         />
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar: an icon rail; each icon names itself in a tooltip */}
       <aside
         className={`
-          fixed lg:static inset-y-0 left-0 z-40
-          w-72 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800
-          flex flex-col h-screen
+          fixed lg:sticky lg:top-0 inset-y-0 left-0 z-40
+          w-20 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800
+          flex flex-col items-center h-screen
           transform transition-transform duration-300 ease-in-out
           ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         `}
       >
         {/* Logo */}
-        <div className="p-6 border-b border-gray-200 dark:border-gray-800">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center">
-              <span className="text-white font-bold text-lg">🏒</span>
-            </div>
-            <div>
-              <h1 className="font-bold text-lg text-gray-900 dark:text-white">
-                Practice Planner
-              </h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                Hockey Coach Tools
-              </p>
-            </div>
+        {/* Extra top space on mobile keeps the logo clear of the menu toggle */}
+        <div className="pt-16 pb-5 lg:pt-5 border-b border-gray-200 dark:border-gray-800 w-full flex justify-center">
+          <div
+            className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center"
+            title="Practice Planner"
+          >
+            <span className="text-white font-bold text-xl" aria-hidden>🏒</span>
+            <span className="sr-only">Practice Planner</span>
           </div>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-4 space-y-2">
+        <nav className="flex-1 py-4 flex flex-col items-center gap-2">
           {navItems.map((item) => {
             const isActive = pathname === item.href;
             return (
@@ -126,90 +143,68 @@ export function Sidebar({ onFeedbackClick }: SidebarProps) {
                 key={item.href}
                 href={item.href}
                 onClick={() => setMobileMenuOpen(false)}
-                className={`
-                  flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200
-                  ${isActive
-                    ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 font-medium'
-                    : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white'
-                  }
-                `}
+                aria-label={item.name}
+                aria-current={isActive ? 'page' : undefined}
+                className={`${railItemClass} ${
+                  isActive
+                    ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400'
+                    : railIdleClass
+                }`}
               >
-                <item.icon className={`w-5 h-5 ${isActive ? 'text-primary-600 dark:text-primary-400' : ''}`} />
-                <span>{item.name}</span>
+                <item.icon className="w-6 h-6" />
+                <RailTooltip>{item.name}</RailTooltip>
               </Link>
             );
           })}
         </nav>
 
-        {/* User Info & Actions */}
-        <div className="p-4 border-t border-gray-200 dark:border-gray-800 space-y-3">
-          {/* User Info */}
+        {/* User & Actions */}
+        <div className="py-4 border-t border-gray-200 dark:border-gray-800 w-full flex flex-col items-center gap-2">
           {isAuthenticated && profile && (
-            <div className="flex items-center gap-3 px-3 py-2">
-              <div className="w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center flex-shrink-0">
+            <div
+              tabIndex={0}
+              aria-label={[profile.fullName, profile.email].filter(Boolean).join(', ')}
+              className={`${railItemClass} cursor-default outline-none focus-visible:ring-2 focus-visible:ring-primary-500`}
+            >
+              <div className="w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
                 <User className="w-5 h-5 text-primary-600 dark:text-primary-400" />
               </div>
-              <div className="flex-1 min-w-0">
-                {profile.fullName && (
-                  <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                    {profile.fullName}
-                  </p>
-                )}
-                <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                  {profile.email}
-                </p>
-              </div>
+              <RailTooltip>
+                {profile.fullName && <span className="block">{profile.fullName}</span>}
+                <span className={profile.fullName ? 'block font-normal text-gray-300' : 'block'}>{profile.email}</span>
+              </RailTooltip>
             </div>
           )}
 
-          {/* Theme Toggle */}
           <button
             type="button"
             onClick={toggleTheme}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl 
-                       bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300
-                       hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors duration-200"
+            aria-label={mounted && theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+            className={`${railItemClass} ${railIdleClass}`}
           >
-            {mounted && (
-              <>
-                {theme === 'dark' ? (
-                  <>
-                    <Sun className="w-5 h-5" />
-                    <span>Light Mode</span>
-                  </>
-                ) : (
-                  <>
-                    <Moon className="w-5 h-5" />
-                    <span>Dark Mode</span>
-                  </>
-                )}
-              </>
-            )}
+            {mounted && (theme === 'dark' ? <Sun className="w-6 h-6" /> : <Moon className="w-6 h-6" />)}
+            <RailTooltip>{mounted && theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</RailTooltip>
           </button>
 
-          {/* Feedback Button */}
           <button
             type="button"
             onClick={handleFeedbackClick}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl 
-                       bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300
-                       hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors duration-200"
+            aria-label="Feedback"
+            className={`${railItemClass} ${railIdleClass}`}
           >
-            <MessageSquare className="w-5 h-5" />
-            <span>Feedback</span>
+            <MessageSquare className="w-6 h-6" />
+            <RailTooltip>Feedback</RailTooltip>
           </button>
 
-          {/* Sign Out Button */}
           {isAuthenticated && (
             <button
               type="button"
               onClick={handleSignOut}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl 
-                         text-red-600 dark:text-red-400
-                         hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors duration-200"
+              aria-label="Sign Out"
+              className={`${railItemClass} text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20`}
             >
-              <LogOut className="w-5 h-5" />
-              <span>Sign Out</span>
+              <LogOut className="w-6 h-6" />
+              <RailTooltip>Sign Out</RailTooltip>
             </button>
           )}
         </div>

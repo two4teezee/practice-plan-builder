@@ -3,17 +3,19 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { useAuth } from '@/components/AuthProvider';
-import { getDrills, getDrillByName, getDrillWithAuditInfo, createDrill, updateDrill, deleteDrill } from '@/lib/db';
+import { getDrills, getDrill, getDrillByName, getDrillWithAuditInfo, createDrill, updateDrill, deleteDrill, backfillSketchThumbnails } from '@/lib/db';
 import type { Drill, DrillCategory } from '@/lib/types';
 import { DRILL_CATEGORIES, DRILL_TAG_CATEGORIES, DRILL_TAG_CATEGORY_NAMES, getTagColor, compareDrillsByCategory, groupDrillsByCategory } from '@/lib/types';
 import { DrillCategoryHeader } from '@/components/drills/DrillCategoryHeader';
 import { DrillCard } from '@/components/drills/DrillCard';
+import { DrillDetailPanel } from '@/components/drills/DrillDetailPanel';
+import { Card } from '@/components/ui/Card';
 import { DrillForm } from '@/components/drills/DrillForm';
 import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { HelpTooltip } from '@/components/ui/HelpTooltip';
-import { Plus, Search, Library, Save, Filter, X, Check, ChevronDown, LayoutGrid, Rows, ArrowUpDown } from 'lucide-react';
+import { Plus, Search, Library, Save, Filter, X, Check, ChevronDown, LayoutGrid, Rows, List, ArrowUpDown } from 'lucide-react';
 import { LAYOUT_STYLES } from '@/lib/layoutConfig';
 
 const FILTER_STORAGE_KEY = 'drills-filter';
@@ -48,7 +50,12 @@ export default function DrillsPage() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [drills, setDrills] = useState<Drill[]>([]);
   const [isLoadingDrills, setIsLoadingDrills] = useState(true);
-  const [cardLayout, setCardLayout] = useState<'rect' | 'square'>('rect');
+  // 'list' shows a compact list with the selected drill's details in a side panel
+  const [cardLayout, setCardLayout] = useState<'rect' | 'square' | 'list'>('rect');
+  const [selectedDrillId, setSelectedDrillId] = useState<string | null>(null);
+  // Full sketches for drills viewed in the list layout's panel (the list itself omits them), by id
+  const [fullSketches, setFullSketches] = useState<Record<string, string>>({});
+  const requestedSketchIds = useRef(new Set<string>());
   const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'category-asc' | 'updated-desc' | 'created-desc'>('category-asc');
 
   // Filter tags by category based on search
@@ -95,6 +102,9 @@ export default function DrillsPage() {
       setIsLoadingDrills(true);
       const data = await getDrills();
       setDrills(data);
+      // Saves and deletes reload the list; drop full sketches that may now be stale
+      setFullSketches({});
+      requestedSketchIds.current.clear();
     } catch (error) {
       console.error('Failed to fetch drills:', error);
     } finally {
@@ -102,9 +112,14 @@ export default function DrillsPage() {
     }
   }, []);
 
-  // Load drills on mount
+  // Load drills on mount, then give any drill sketched before thumbnails existed its thumbnail
   useEffect(() => {
-    fetchDrills();
+    fetchDrills().then(() => backfillSketchThumbnails()).then(thumbnails => {
+      if (thumbnails.size === 0) return;
+      setDrills(prev => prev.map(drill =>
+        drill.id && thumbnails.has(drill.id) ? { ...drill, sketchThumbnail: thumbnails.get(drill.id) } : drill
+      ));
+    });
   }, [fetchDrills]);
 
   // Close filter popover when clicking outside
@@ -263,9 +278,55 @@ export default function DrillsPage() {
       key={drill.id}
       drill={drill}
       onClick={handleCardClick}
-      cardLayout={cardLayout}
+      cardLayout={cardLayout === 'square' ? 'square' : 'rect'}
     />
   );
+
+  // List layout: the chosen drill, or the first one when nothing (still visible) is chosen
+  const selectedDrill = sortedDrills.find(drill => drill.id === selectedDrillId) ?? sortedDrills[0] ?? null;
+
+  useEffect(() => {
+    const id = selectedDrill?.id;
+    if (cardLayout !== 'list' || !id || requestedSketchIds.current.has(id)) return;
+    requestedSketchIds.current.add(id);
+    getDrill(id)
+      .then(full => setFullSketches(prev => ({ ...prev, [id]: full?.sketchData ?? '' })))
+      .catch(error => {
+        console.error('Failed to load drill sketch:', error);
+        requestedSketchIds.current.delete(id);
+      });
+  }, [cardLayout, selectedDrill?.id]);
+
+  // The panel shows the thumbnail until the full sketch arrives
+  const selectedDrillSketch = selectedDrill?.id ? fullSketches[selectedDrill.id] : undefined;
+  const displayedDrill = selectedDrill && selectedDrillSketch
+    ? { ...selectedDrill, sketchData: selectedDrillSketch }
+    : selectedDrill;
+
+  const renderDrillListItem = (drill: Drill) => {
+    const isSelected = drill.id === selectedDrill?.id;
+    return (
+      <li key={drill.id}>
+        <button
+          type="button"
+          onClick={() => setSelectedDrillId(drill.id ?? null)}
+          aria-current={isSelected}
+          className={`w-full text-left px-3 py-2 rounded-xl transition-colors ${
+            isSelected ? 'bg-primary-50 dark:bg-primary-900/30' : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+          }`}
+        >
+          <span className={`block text-sm font-medium truncate ${
+            isSelected ? 'text-primary-700 dark:text-primary-300' : 'text-gray-900 dark:text-white'
+          }`}>
+            {drill.name}
+          </span>
+          <span className="block text-xs text-gray-500 dark:text-gray-400">
+            {sortBy === 'category-asc' ? drill.duration : `${drill.category} · ${drill.duration}`}
+          </span>
+        </button>
+      </li>
+    );
+  };
 
   const handleSave = async (drillData: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>) => {
     try {
@@ -731,6 +792,19 @@ export default function DrillsPage() {
             >
               <LayoutGrid className="w-4 h-4" />
             </button>
+            <button
+              type="button"
+              onClick={() => setCardLayout('list')}
+              aria-pressed={cardLayout === 'list'}
+              aria-label="List with details panel"
+              className={`flex items-center gap-1.5 px-3 py-2.5 text-sm font-medium transition-all border-l border-gray-300 dark:border-gray-600 ${
+                cardLayout === 'list'
+                  ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+                  : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+              }`}
+            >
+              <List className="w-4 h-4" />
+            </button>
           </div>
 
         </div>
@@ -745,6 +819,31 @@ export default function DrillsPage() {
         <div className="text-center py-8">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-3"></div>
           <p className="text-gray-500 dark:text-gray-400">Loading drills...</p>
+        </div>
+      ) : sortedDrills && sortedDrills.length > 0 && cardLayout === 'list' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-3 items-start">
+          <Card className="p-2 lg:sticky lg:top-3 lg:max-h-[calc(100vh-1.5rem)] lg:overflow-y-auto">
+            <p className="px-2 pt-1 pb-2 text-xs text-gray-500 dark:text-gray-400">
+              {sortedDrills.length} drill{sortedDrills.length === 1 ? '' : 's'}
+            </p>
+            {sortBy === 'category-asc' ? (
+              <div className="space-y-2">
+                {groupDrillsByCategory(sortedDrills).map((section) => (
+                  <section key={section.category}>
+                    <DrillCategoryHeader
+                      category={section.category}
+                      count={section.drills.length}
+                      className="bg-white dark:bg-gray-900 px-2"
+                    />
+                    <ul className="space-y-1">{section.drills.map(renderDrillListItem)}</ul>
+                  </section>
+                ))}
+              </div>
+            ) : (
+              <ul className="space-y-1">{sortedDrills.map(renderDrillListItem)}</ul>
+            )}
+          </Card>
+          {displayedDrill && <DrillDetailPanel drill={displayedDrill} onEdit={handleCardClick} />}
         </div>
       ) : sortedDrills && sortedDrills.length > 0 ? (
         sortBy === 'category-asc' ? (

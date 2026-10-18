@@ -35,3 +35,25 @@ _Avoid_: Track, station, lane
 **Run alongside**:
 The action that turns a single Drill into a Split by adding a second Group with another Drill.
 _Avoid_: Concurrent drill, side drill
+
+**Attendance**:
+Which Players on the Roster are present for one Practice Plan, which Team Group each one practices with that day (it can differ from their Default Group), and whether they're on the Home or Away side (or N/A).
+_Avoid_: Check-in, lineup
+
+### Teams
+
+**Team**:
+A team managed in the Team Manager, with a Roster and Team Groups. A Practice Plan may link to one.
+_Avoid_: Club, squad
+
+**Roster**:
+The Players on a Team, coaches included.
+_Avoid_: Lineup, player list
+
+**Player**:
+One person on a Roster, with a position (Skater, Goalie, Coach or Assistant Coach) and an optional Team Group.
+_Avoid_: Athlete, member
+
+**Team Group**:
+A named subset of a Team's Roster (Forwards, Red, Line 1…), shown as "Default Group" in the app because it's a preset: Attendance starts each Player in theirs. Its names seed the Group names of a Split in that Team's Practice Plans. Distinct from a Split's **Group**.
+_Avoid_: Line, unit

@@ -1,5 +1,7 @@
 import { supabase, isSupabaseConfigured } from './supabase';
-import type { Drill, PracticePlan, PracticePlanDrill, TimelineItem, Location } from './types';
+import { createSketchThumbnail } from './sketch';
+import type { Drill, PracticePlan, PracticePlanDrill, TimelineItem, Location, Team, TeamGroup, Player, PlayerAttendance } from './types';
+import { normalizePlayerPosition, stripLibrarySketches } from './types';
 
 // ============================================
 // Database Row Types (snake_case from Supabase)
@@ -20,7 +22,8 @@ interface DrillRow {
   description: string;
   video_link: string;
   pdf_link: string;
-  sketch_data: string | null;
+  sketch_data?: string | null;       // Left out of drill lists (see DRILL_LIST_COLUMNS)
+  sketch_thumbnail: string | null;   // '' when the sketch couldn't be drawn
   tags: string[] | null;
   created_at: string;
   updated_at: string;
@@ -33,6 +36,8 @@ interface PracticePlanRow {
   name: string;
   description: string;
   team_name: string;
+  team_id: string | null;
+  attendance: PlayerAttendance[] | null;
   date: string;
   duration: string;
   location: Location | null;  // JSONB from database
@@ -40,6 +45,15 @@ interface PracticePlanRow {
   equipment: string;
   timeline: TimelineItem[];
   drills: PracticePlanDrill[];
+  created_at: string;
+  updated_at: string;
+}
+
+interface TeamRow {
+  id: string;
+  name: string;
+  groups: TeamGroup[] | null;
+  players: Player[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -65,6 +79,7 @@ function drillRowToApp(row: DrillRow): Drill {
     videoLink: row.video_link || '',
     pdfLink: row.pdf_link || '',
     sketchData: row.sketch_data || undefined,
+    sketchThumbnail: row.sketch_thumbnail || undefined,
     tags: row.tags || [],
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
@@ -73,7 +88,7 @@ function drillRowToApp(row: DrillRow): Drill {
   };
 }
 
-function drillAppToRow(drill: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>): Omit<DrillRow, 'id' | 'created_at' | 'updated_at'> {
+function drillAppToRow(drill: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>): Omit<DrillRow, 'id' | 'created_at' | 'updated_at' | 'sketch_thumbnail'> {
   return {
     name: drill.name,
     category: drill.category,
@@ -115,6 +130,8 @@ function practicePlanRowToApp(row: PracticePlanRow): PracticePlan {
     name: row.name,
     description: row.description || '',
     teamName: row.team_name || '',
+    teamId: row.team_id || null,
+    attendance: row.attendance || [],
     date: new Date(row.date),
     duration: row.duration as PracticePlan['duration'],
     location,
@@ -137,19 +154,30 @@ function practicePlanAppToRow(plan: Omit<PracticePlan, 'id' | 'createdAt' | 'upd
     name: plan.name,
     description: plan.description,
     team_name: plan.teamName || '',
+    team_id: plan.teamId || null,
+    attendance: plan.attendance || [],
     date: dateStr,
     duration: plan.duration,
     location: plan.location,
     notes: plan.notes,
     equipment: plan.equipment,
-    timeline: plan.timeline,
-    drills: plan.drills,
+    timeline: stripLibrarySketches(plan.timeline),
+    // Legacy column: the timeline holds the same drills, so it is no longer filled
+    drills: [],
   };
 }
 
 // ============================================
 // Drill CRUD Operations
 // ============================================
+
+// Everything but the full sketch (strokes + full-size image), which only the editor and
+// detail views need; they load it with getDrill. Cards use sketch_thumbnail instead.
+const DRILL_LIST_COLUMNS = [
+  'id', 'name', 'category', 'duration', 'skill_focus', 'objective', 'setup', 'execution',
+  'coaching_points', 'variations', 'equipment', 'description', 'video_link', 'pdf_link',
+  'tags', 'sketch_thumbnail', 'created_at', 'updated_at', 'created_by', 'updated_by',
+].join(',');
 
 export async function getDrills(): Promise<Drill[]> {
   if (!isSupabaseConfigured()) {
@@ -159,7 +187,7 @@ export async function getDrills(): Promise<Drill[]> {
   
   const { data, error } = await supabase
     .from('drills')
-    .select('*')
+    .select(DRILL_LIST_COLUMNS)
     .order('name');
   
   if (error) {
@@ -167,7 +195,41 @@ export async function getDrills(): Promise<Drill[]> {
     throw error;
   }
   
-  return (data || []).map(drillRowToApp);
+  return ((data || []) as unknown as DrillRow[]).map(drillRowToApp);
+}
+
+// Make thumbnails for drills sketched before thumbnails existed. Each drill is done once
+// (a sketch that can't be drawn gets ''), so this is a no-op after the first run.
+// Returns the new thumbnails by drill id.
+export async function backfillSketchThumbnails(): Promise<Map<string, string>> {
+  const thumbnails = new Map<string, string>();
+  if (!isSupabaseConfigured()) return thumbnails;
+
+  const { data, error } = await supabase
+    .from('drills')
+    .select('id, sketch_data')
+    .is('sketch_thumbnail', null)
+    .not('sketch_data', 'is', null)
+    .neq('sketch_data', '');
+
+  if (error) {
+    console.error('Error finding drills without thumbnails:', error);
+    return thumbnails;
+  }
+
+  for (const row of data || []) {
+    const thumbnail = await createSketchThumbnail(row.sketch_data);
+    const { error: updateError } = await supabase
+      .from('drills')
+      .update({ sketch_thumbnail: thumbnail })
+      .eq('id', row.id);
+    if (updateError) {
+      console.error('Error saving sketch thumbnail:', updateError);
+    } else if (thumbnail) {
+      thumbnails.set(row.id, thumbnail);
+    }
+  }
+  return thumbnails;
 }
 
 export async function getDrill(id: string): Promise<Drill | null> {
@@ -284,7 +346,10 @@ export async function createDrill(
   drill: Omit<Drill, 'id' | 'createdAt' | 'updatedAt'>,
   userId?: string
 ): Promise<Drill> {
-  const row = drillAppToRow(drill);
+  const row = {
+    ...drillAppToRow(drill),
+    sketch_thumbnail: await createSketchThumbnail(drill.sketchData),
+  };
   
   // Add audit fields if userId is provided
   const rowWithAudit = userId 
@@ -325,7 +390,10 @@ export async function updateDrill(
   if (drill.description !== undefined) updates.description = drill.description;
   if (drill.videoLink !== undefined) updates.video_link = drill.videoLink;
   if (drill.pdfLink !== undefined) updates.pdf_link = drill.pdfLink;
-  if (drill.sketchData !== undefined) updates.sketch_data = drill.sketchData;
+  if (drill.sketchData !== undefined) {
+    updates.sketch_data = drill.sketchData;
+    updates.sketch_thumbnail = await createSketchThumbnail(drill.sketchData);
+  }
   if (drill.tags !== undefined) updates.tags = drill.tags;
   
   // Set updated_by if userId is provided
@@ -470,6 +538,9 @@ export async function updatePracticePlan(id: string, plan: Partial<Omit<Practice
   const updates: Record<string, unknown> = {};
   if (plan.name !== undefined) updates.name = plan.name;
   if (plan.description !== undefined) updates.description = plan.description;
+  if (plan.teamName !== undefined) updates.team_name = plan.teamName;
+  if (plan.teamId !== undefined) updates.team_id = plan.teamId;
+  if (plan.attendance !== undefined) updates.attendance = plan.attendance;
   if (plan.date !== undefined) {
     updates.date = plan.date instanceof Date 
       ? plan.date.toISOString().split('T')[0]
@@ -479,8 +550,11 @@ export async function updatePracticePlan(id: string, plan: Partial<Omit<Practice
   if (plan.location !== undefined) updates.location = plan.location;
   if (plan.notes !== undefined) updates.notes = plan.notes;
   if (plan.equipment !== undefined) updates.equipment = plan.equipment;
-  if (plan.timeline !== undefined) updates.timeline = plan.timeline;
-  if (plan.drills !== undefined) updates.drills = plan.drills;
+  if (plan.timeline !== undefined) {
+    updates.timeline = stripLibrarySketches(plan.timeline);
+    // Legacy column: the timeline holds the same drills, so it is no longer filled
+    updates.drills = [];
+  }
   
   const { data, error } = await supabase
     .from('practice_plans')
@@ -505,6 +579,94 @@ export async function deletePracticePlan(id: string): Promise<void> {
   
   if (error) {
     console.error('Error deleting practice plan:', error);
+    throw error;
+  }
+}
+
+// ============================================
+// Team CRUD Operations
+// ============================================
+
+function teamRowToApp(row: TeamRow): Team {
+  return {
+    id: row.id,
+    name: row.name,
+    groups: row.groups || [],
+    // Drop fields no longer used (e.g. jersey number) and map old positions
+    players: (row.players || []).map(player => ({
+      id: player.id,
+      name: player.name,
+      position: normalizePlayerPosition(player.position),
+      groupId: player.groupId ?? null,
+    })),
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
+}
+
+export async function getTeams(): Promise<Team[]> {
+  if (!isSupabaseConfigured()) {
+    console.warn('Supabase not configured, returning empty teams');
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from('teams')
+    .select('*')
+    .order('name');
+
+  if (error) {
+    console.error('Error fetching teams:', error);
+    throw error;
+  }
+
+  return (data || []).map(teamRowToApp);
+}
+
+export async function createTeam(team: Omit<Team, 'id' | 'createdAt' | 'updatedAt'>): Promise<Team> {
+  const { data, error } = await supabase
+    .from('teams')
+    .insert({ name: team.name, groups: team.groups, players: team.players })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error creating team:', error);
+    throw error;
+  }
+
+  return teamRowToApp(data);
+}
+
+export async function updateTeam(id: string, team: Partial<Omit<Team, 'id' | 'createdAt' | 'updatedAt'>>): Promise<Team> {
+  const updates: Record<string, unknown> = {};
+  if (team.name !== undefined) updates.name = team.name;
+  if (team.groups !== undefined) updates.groups = team.groups;
+  if (team.players !== undefined) updates.players = team.players;
+
+  const { data, error } = await supabase
+    .from('teams')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error updating team:', error);
+    throw error;
+  }
+
+  return teamRowToApp(data);
+}
+
+export async function deleteTeam(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('teams')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error deleting team:', error);
     throw error;
   }
 }
