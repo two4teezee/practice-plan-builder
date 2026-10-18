@@ -33,7 +33,8 @@ export interface Drill {
   description: string;
   videoLink: string;
   pdfLink: string;
-  sketchData?: string; // JSON string containing sketch strokes and rink view
+  sketchData?: string; // JSON string containing sketch strokes and rink view (not loaded in drill lists)
+  sketchThumbnail?: string; // Small JPEG data URL of the sketch, for cards
   tags: string[]; // Array of tag names
   createdAt: Date;
   updatedAt: Date;
@@ -251,13 +252,14 @@ export function convertTimelineToDrills(timeline: TimelineItem[]): PracticePlanD
   }));
 }
 
-// Create a new parallel split with default groups
-export function createParallelSplit(groupCount: number = 2): ParallelSplitItem {
+// Create a new parallel split with default groups.
+// groupNames (e.g. a Team's Team Groups) name the groups in order; default names fill the rest.
+export function createParallelSplit(groupCount: number = 2, groupNames: string[] = []): ParallelSplitItem {
   const groups: PracticeGroup[] = [];
   for (let i = 0; i < Math.min(groupCount, 4); i++) {
     groups.push({
       id: `group-${Date.now()}-${Math.random().toString(36).slice(2, 9)}-${i}`,
-      name: GROUP_NAMES[i],
+      name: groupNames[i] || GROUP_NAMES[i],
       color: GROUP_COLORS[i],
       items: [],
     });
@@ -386,12 +388,17 @@ export function dissolveSplitIfSparse(timeline: TimelineItem[], splitId: string)
 }
 
 // "Run alongside": wrap an existing drill in a split, with a second drill in its own group.
-// Groups are named after each drill's category, falling back to the default names on a tie.
-export function createSplitAlongside(existing: DrillItem, alongside: DrillItem): ParallelSplitItem {
-  const split = createParallelSplit(2);
+// Groups take the Team Group names when given; otherwise they are named after each drill's
+// category, falling back to the default names on a tie.
+export function createSplitAlongside(
+  existing: DrillItem,
+  alongside: DrillItem,
+  groupNames: string[] = []
+): ParallelSplitItem {
+  const split = createParallelSplit(2, groupNames);
   const existingCategory = getEffectiveDrill(existing).category;
   const alongsideCategory = getEffectiveDrill(alongside).category;
-  const useCategoryNames = existingCategory !== alongsideCategory;
+  const useCategoryNames = groupNames.length === 0 && existingCategory !== alongsideCategory;
   const [first, second] = split.groups;
   return {
     ...split,
@@ -400,6 +407,23 @@ export function createSplitAlongside(existing: DrillItem, alongside: DrillItem):
       { ...second, name: useCategoryNames ? alongsideCategory : second.name, items: [alongside] },
     ],
   };
+}
+
+// Drop the library sketch from each drill's snapshot before a plan is stored. The library
+// sketch is reloaded from the drills table whenever a plan is viewed or exported, so the
+// copy only bloats the plan. Per-practice sketches live in overrides and are kept.
+export function stripLibrarySketches(timeline: TimelineItem[]): TimelineItem[] {
+  return timeline.map(item => {
+    if (item.type === 'parallel') {
+      return {
+        ...item,
+        groups: item.groups.map(group => ({ ...group, items: stripLibrarySketches(group.items) })),
+      };
+    }
+    if (!item.drill?.sketchData && !item.drill?.sketchThumbnail) return item;
+    const { sketchData: _librarySketch, sketchThumbnail: _libraryThumbnail, ...drill } = item.drill;
+    return { ...item, drill };
+  });
 }
 
 // Create a new drill item
@@ -414,7 +438,7 @@ export function createDrillItem(drill: Drill): DrillItem {
 }
 
 // Add a group to a parallel split (max 4)
-export function addGroupToSplit(split: ParallelSplitItem): ParallelSplitItem {
+export function addGroupToSplit(split: ParallelSplitItem, groupNames: string[] = []): ParallelSplitItem {
   if (split.groups.length >= 4) return split;
   const newIndex = split.groups.length;
   return {
@@ -423,7 +447,7 @@ export function addGroupToSplit(split: ParallelSplitItem): ParallelSplitItem {
       ...split.groups,
       {
         id: `group-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        name: GROUP_NAMES[newIndex],
+        name: groupNames[newIndex] || GROUP_NAMES[newIndex],
         color: GROUP_COLORS[newIndex],
         items: [],
       },
@@ -440,11 +464,138 @@ export function removeGroupFromSplit(split: ParallelSplitItem, groupId: string):
   };
 }
 
+// Rename top-level split groups that still carry a default name ("Group A"…) after the
+// Team Groups, by position. Nested splits subdivide a group, so they keep their names.
+export function applyTeamGroupNames(timeline: TimelineItem[], groupNames: string[]): TimelineItem[] {
+  if (groupNames.length === 0) return timeline;
+  return timeline.map(item => {
+    if (item.type !== 'parallel') return item;
+    return {
+      ...item,
+      groups: item.groups.map((group, index) => ({
+        ...group,
+        name: (GROUP_NAMES as readonly string[]).includes(group.name) && groupNames[index]
+          ? groupNames[index]
+          : group.name,
+      })),
+    };
+  });
+}
+
+// ============================================
+// Teams (Team Manager)
+// ============================================
+
+export type PlayerPosition = 'Skater' | 'Goalie' | 'Coach' | 'Assistant Coach';
+// Also the roster sort order
+export const PLAYER_POSITIONS: PlayerPosition[] = ['Skater', 'Goalie', 'Coach', 'Assistant Coach'];
+
+// Positions saved before the Skater/Goalie/Coach list (Forward, Defense, blank) become Skater
+// Coaches and assistant coaches: listed first on attendance sheets and never given a Home/Away side
+export function isStaffPosition(position: PlayerPosition): boolean {
+  return position === 'Coach' || position === 'Assistant Coach';
+}
+
+export function normalizePlayerPosition(position: string | undefined): PlayerPosition {
+  return (PLAYER_POSITIONS as string[]).includes(position ?? '') ? (position as PlayerPosition) : 'Skater';
+}
+
+// A named subset of a Team's Roster (e.g. "Forwards", "Red"); its name seeds Split Group names
+export interface TeamGroup {
+  id: string;
+  name: string;
+}
+
+export interface Player {
+  id: string;
+  name: string;
+  position: PlayerPosition;
+  groupId: string | null;   // TeamGroup the player is assigned to
+}
+
+export interface Team {
+  id?: string; // UUID from Supabase
+  name: string;
+  groups: TeamGroup[];
+  players: Player[];        // The Roster
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Team Groups reuse the split group palette, by position
+export function getTeamGroupColor(index: number): string {
+  return GROUP_COLORS[index % GROUP_COLORS.length];
+}
+
+export function createTeamGroup(name: string): TeamGroup {
+  return { id: `tgroup-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`, name };
+}
+
+export function createPlayer(fields: Partial<Omit<Player, 'id'>> = {}): Player {
+  return {
+    id: `player-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    name: '',
+    position: 'Skater',
+    groupId: null,
+    ...fields,
+  };
+}
+
+// Order players by position (PLAYER_POSITIONS order), then name
+export function comparePlayers(a: Player, b: Player): number {
+  const positionDiff = PLAYER_POSITIONS.indexOf(a.position) - PLAYER_POSITIONS.indexOf(b.position);
+  if (positionDiff !== 0) return positionDiff;
+  return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+}
+
+// Which side a player is on for the day (e.g. for a scrimmage); null means N/A
+export type AttendanceSide = 'Home' | 'Away';
+export const ATTENDANCE_SIDES: AttendanceSide[] = ['Home', 'Away'];
+
+// One player's attendance for a single Practice Plan; groupId may differ from the Team assignment
+export interface PlayerAttendance {
+  playerId: string;
+  present: boolean;
+  groupId: string | null;
+  side: AttendanceSide | null;      // Always null for staff
+  // Snapshot of the Roster at save time, so a saved plan still reads correctly after it changes.
+  // Optional because attendance saved before snapshots existed lacks them.
+  name?: string;
+  position?: PlayerPosition;
+  groupName?: string | null;
+}
+
+// Attendance for every player on the Roster: saved entries win, anyone else defaults to
+// present in their Team Group. Entries for players no longer on the Roster are dropped.
+// Entries come back in Team Group order (unassigned last), then roster order.
+export function resolveAttendance(team: Team, attendance: PlayerAttendance[]): PlayerAttendance[] {
+  const saved = new Map(attendance.map(a => [a.playerId, a]));
+  const groupIndex = new Map(team.groups.map((g, i) => [g.id, i]));
+  const resolved = team.players.map(player => {
+    const entry = saved.get(player.id);
+    const savedGroupId = entry ? entry.groupId : player.groupId;
+    const groupId = savedGroupId && groupIndex.has(savedGroupId) ? savedGroupId : null;
+    return {
+      playerId: player.id,
+      present: entry ? entry.present : true,
+      groupId,
+      side: isStaffPosition(player.position) ? null : entry?.side ?? null,
+      name: player.name,
+      position: player.position,
+      groupName: groupId ? team.groups[groupIndex.get(groupId)!].name : null,
+    };
+  });
+  const rank = (a: PlayerAttendance) => (a.groupId === null ? team.groups.length : groupIndex.get(a.groupId)!);
+  return resolved.sort((a, b) => rank(a) - rank(b));
+}
+
 export interface PracticePlan {
   id?: string; // UUID from Supabase
   name: string;
   description: string;
   teamName: string;
+  teamId: string | null;            // Team Manager team, when the team came from there
+  attendance: PlayerAttendance[];   // Only meaningful with a teamId
   date: Date;
   duration: PracticeDuration;
   location: Location | null;  // Google Places location data for filtering

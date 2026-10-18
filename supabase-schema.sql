@@ -98,6 +98,9 @@ ALTER TABLE drills ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE drills ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES profiles(id) ON DELETE SET NULL;
 ALTER TABLE drills ADD COLUMN IF NOT EXISTS updated_by UUID REFERENCES profiles(id) ON DELETE SET NULL;
 
+-- Migration: small sketch thumbnails for drill cards, so drill lists don't download full sketches
+ALTER TABLE drills ADD COLUMN IF NOT EXISTS sketch_thumbnail TEXT;  -- JPEG data URL; '' if the sketch can't be drawn
+
 -- Index for audit column lookups
 CREATE INDEX IF NOT EXISTS idx_drills_created_by ON drills(created_by);
 CREATE INDEX IF NOT EXISTS idx_drills_updated_by ON drills(updated_by);
@@ -122,6 +125,25 @@ CREATE TABLE IF NOT EXISTS practice_plans (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ============================================
+-- Teams table (Team Manager)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS teams (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name TEXT NOT NULL,
+  groups JSONB DEFAULT '[]'::jsonb,   -- [{ id, name }]
+  players JSONB DEFAULT '[]'::jsonb,  -- [{ id, name, number, position, groupId }]
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_teams_name ON teams(name);
+
+-- Migration: link practice plans to a Team Manager team and record attendance
+ALTER TABLE practice_plans ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams(id) ON DELETE SET NULL;
+ALTER TABLE practice_plans ADD COLUMN IF NOT EXISTS attendance JSONB DEFAULT '[]'::jsonb;  -- [{ playerId, present, groupId }]
 
 -- ============================================
 -- Feedback table
@@ -164,15 +186,33 @@ END;
 $$ language 'plpgsql';
 
 -- Triggers to auto-update updated_at
+-- Drills get their own updated_at trigger: filling in a thumbnail alone isn't an edit,
+-- so it shouldn't move a drill up the "Recently Updated" sort
+CREATE OR REPLACE FUNCTION update_drills_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF (to_jsonb(NEW) - 'sketch_thumbnail' - 'updated_at') IS DISTINCT FROM (to_jsonb(OLD) - 'sketch_thumbnail' - 'updated_at') THEN
+    NEW.updated_at = NOW();
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 DROP TRIGGER IF EXISTS update_drills_updated_at ON drills;
 CREATE TRIGGER update_drills_updated_at
   BEFORE UPDATE ON drills
   FOR EACH ROW
-  EXECUTE FUNCTION update_updated_at_column();
+  EXECUTE FUNCTION update_drills_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_practice_plans_updated_at ON practice_plans;
 CREATE TRIGGER update_practice_plans_updated_at
   BEFORE UPDATE ON practice_plans
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_teams_updated_at ON teams;
+CREATE TRIGGER update_teams_updated_at
+  BEFORE UPDATE ON teams
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
@@ -184,6 +224,7 @@ CREATE TRIGGER update_practice_plans_updated_at
 ALTER TABLE drills ENABLE ROW LEVEL SECURITY;
 ALTER TABLE practice_plans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
+ALTER TABLE teams ENABLE ROW LEVEL SECURITY;
 
 -- Helper function to check if current user is approved
 CREATE OR REPLACE FUNCTION is_approved_user()
@@ -248,6 +289,28 @@ CREATE POLICY "Approved users can update practice_plans" ON practice_plans
 
 DROP POLICY IF EXISTS "Approved users can delete practice_plans" ON practice_plans;
 CREATE POLICY "Approved users can delete practice_plans" ON practice_plans
+  FOR DELETE
+  USING (is_approved_user());
+
+-- Teams policies: only approved users can read/write
+DROP POLICY IF EXISTS "Approved users can select teams" ON teams;
+CREATE POLICY "Approved users can select teams" ON teams
+  FOR SELECT
+  USING (is_approved_user());
+
+DROP POLICY IF EXISTS "Approved users can insert teams" ON teams;
+CREATE POLICY "Approved users can insert teams" ON teams
+  FOR INSERT
+  WITH CHECK (is_approved_user());
+
+DROP POLICY IF EXISTS "Approved users can update teams" ON teams;
+CREATE POLICY "Approved users can update teams" ON teams
+  FOR UPDATE
+  USING (is_approved_user())
+  WITH CHECK (is_approved_user());
+
+DROP POLICY IF EXISTS "Approved users can delete teams" ON teams;
+CREATE POLICY "Approved users can delete teams" ON teams
   FOR DELETE
   USING (is_approved_user());
 

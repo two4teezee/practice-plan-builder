@@ -10,9 +10,13 @@ import {
   createPracticePlan,
   updatePracticePlan,
   getDrillByName,
+  getDrill,
   ensurePlanHasTimeline,
+  refreshPlanDrillData,
+  getTeams,
 } from '@/lib/db';
 import { exportPracticePlanToPDF } from '@/lib/export';
+import { getSketchImagePreview } from '@/lib/sketch';
 import type { 
   PracticePlan, 
   PracticePlanDrill, 
@@ -20,6 +24,8 @@ import type {
   PracticeDuration,
   EquipmentOption,
   Location,
+  Team,
+  PlayerAttendance,
 } from '@/lib/types';
 import type { DrillItem, TimelineItem } from '@/lib/types';
 import {
@@ -39,6 +45,8 @@ import {
   createSplitAlongside,
   addGroupToSplit,
   removeGroupFromSplit,
+  applyTeamGroupNames,
+  resolveAttendance,
 } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -47,6 +55,7 @@ import { Input } from '@/components/ui/Input';
 import { DrillsList } from '@/components/practice/DrillsList';
 import { DrillPicker } from '@/components/practice/DrillPicker';
 import { PracticeTimeline } from '@/components/practice/PracticeTimeline';
+import { AttendanceModal } from '@/components/practice/AttendanceModal';
 import { LocationPicker } from '@/components/ui/LocationPicker';
 import { HelpTooltip } from '@/components/ui/HelpTooltip';
 import { 
@@ -64,7 +73,8 @@ import {
   Filter,
   ArrowUpDown,
   Check,
-  X
+  X,
+  UserCheck
 } from 'lucide-react';
 import { LAYOUT_CONFIG, LAYOUT_STYLES, px } from '@/lib/layoutConfig';
 
@@ -95,6 +105,8 @@ interface DraftData {
     name: string;
     description: string;
     teamName: string;
+    teamId?: string | null;          // Optional for drafts saved before Team Manager
+    attendance?: PlayerAttendance[];
     date: string;
     duration: PracticeDuration;
     location: Location | null;
@@ -108,6 +120,8 @@ const getDefaultFormData = () => ({
   name: format(new Date(), 'MMMM d, yyyy') + ' Practice',
   description: '',
   teamName: '',
+  teamId: null as string | null,
+  attendance: [] as PlayerAttendance[],
   date: format(new Date(), 'yyyy-MM-dd'),
   duration: '50 minutes' as PracticeDuration,
   location: null as Location | null,
@@ -138,7 +152,8 @@ export default function CreatePracticePlanPage() {
   const [duplicatePlanId, setDuplicatePlanId] = useState<string | null>(null);
   const [newPlanName, setNewPlanName] = useState('');
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
-  const [isTeamNameOpen, setIsTeamNameOpen] = useState(false);
+  const [isAttendanceOpen, setIsAttendanceOpen] = useState(false);
+  const [teams, setTeams] = useState<Team[]>([]);
   
   const [formData, setFormData] = useState(getDefaultFormData);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
@@ -188,6 +203,12 @@ export default function CreatePracticePlanPage() {
   useEffect(() => {
     fetchSavedPlans();
   }, [fetchSavedPlans]);
+
+  useEffect(() => {
+    getTeams()
+      .then(setTeams)
+      .catch(error => console.error('Failed to fetch teams:', error));
+  }, []);
 
   // Load saved plans when modal opens
   useEffect(() => {
@@ -255,11 +276,56 @@ export default function CreatePracticePlanPage() {
     return Array.from(unique).sort((a, b) => a.localeCompare(b));
   }, [savedPlans]);
 
-  const filteredTeamNameOptions = useMemo(() => {
-    const query = formData.teamName.trim().toLowerCase();
-    if (!query) return teamNameOptions;
-    return teamNameOptions.filter(option => option.toLowerCase().includes(query));
-  }, [formData.teamName, teamNameOptions]);
+  const selectedTeam = useMemo(
+    () => teams.find(team => team.id === formData.teamId) ?? null,
+    [teams, formData.teamId]
+  );
+
+  // Team Group names seed the names of top-level split groups
+  const teamGroupNames = useMemo(
+    () => (selectedTeam?.groups ?? []).map(group => group.name.trim()).filter(Boolean),
+    [selectedTeam]
+  );
+
+  // Team names from previous plans, minus those already offered from Team Manager
+  const previousPlanTeamNames = useMemo(() => {
+    const managed = new Set(teams.map(team => team.name));
+    return teamNameOptions.filter(name => !managed.has(name));
+  }, [teams, teamNameOptions]);
+
+  const resolvedAttendance = useMemo(
+    () => (selectedTeam ? resolveAttendance(selectedTeam, formData.attendance) : []),
+    [selectedTeam, formData.attendance]
+  );
+  const presentCount = resolvedAttendance.filter(a => a.present).length;
+
+  // Team dropdown values: "team:<id>" for Team Manager teams, "name:<name>" for previous-plan names
+  const teamSelectValue = formData.teamId
+    ? `team:${formData.teamId}`
+    : formData.teamName
+      ? `name:${formData.teamName}`
+      : '';
+
+  const handleTeamSelect = (value: string) => {
+    if (value.startsWith('team:')) {
+      const team = teams.find(t => t.id === value.slice('team:'.length));
+      if (!team?.id) return;
+      setFormData(prev => ({
+        ...prev,
+        teamId: team.id!,
+        teamName: team.name,
+        attendance: prev.teamId === team.id ? prev.attendance : [],
+      }));
+      setTimeline(prev => applyTeamGroupNames(prev, team.groups.map(g => g.name.trim()).filter(Boolean)));
+      return;
+    }
+    setFormData(prev => ({
+      ...prev,
+      teamId: null,
+      teamName: value.startsWith('name:') ? value.slice('name:'.length) : '',
+      attendance: [],
+    }));
+  };
 
   const clearLoadFilters = () => {
     setLoadDateRange('all');
@@ -449,6 +515,8 @@ export default function CreatePracticePlanPage() {
             ...getDefaultFormData(),
             ...draft.formData,
             teamName: draft.formData.teamName ?? '',
+            teamId: draft.formData.teamId ?? null,
+            attendance: draft.formData.attendance ?? [],
           });
           // Prefer timeline if available, otherwise convert legacy drills
           if (draft.timeline && draft.timeline.length > 0) {
@@ -607,13 +675,27 @@ export default function CreatePracticePlanPage() {
       // Only now does the drill become a split, so cancelling the picker changes nothing
       setTimeline(prev => prev.map(item =>
         item.id === alongsideDrillId && item.type === 'drill'
-          ? createSplitAlongside(item, newDrillItem)
+          ? createSplitAlongside(item, newDrillItem, teamGroupNames)
           : item
       ));
       handleClosePicker();
       return;
     }
     setTimeline(prev => addItemToTimeline(prev, newDrillItem, activeGroupPath));
+  };
+
+  // Drill lists leave out full sketches; load this one's while its preview is open
+  const handlePreviewDrill = (drill: Drill) => {
+    setPreviewDrill(drill);
+    if (!drill.id || drill.sketchData) return;
+    getDrill(drill.id)
+      .then(full => {
+        if (!full?.sketchData) return;
+        setPreviewDrill(current =>
+          current && current.id === drill.id ? { ...current, sketchData: full.sketchData } : current
+        );
+      })
+      .catch(error => console.error('Failed to load drill sketch:', error));
   };
 
   const handleRemoveDrill = (id: string) => {
@@ -654,7 +736,9 @@ export default function CreatePracticePlanPage() {
 
   // Add a parallel split to the main timeline
   const handleAddParallelSplit = () => {
-    const newSplit = createParallelSplit(2);
+    // One split group per Team Group (2-4), named after them
+    const groupCount = Math.max(2, Math.min(4, teamGroupNames.length));
+    const newSplit = createParallelSplit(groupCount, teamGroupNames);
     setTimeline(prev => [...prev, newSplit]);
   };
 
@@ -681,7 +765,9 @@ export default function CreatePracticePlanPage() {
   const handleAddGroup = (parallelId: string) => {
     setTimeline(prev => updateTimelineItem(prev, parallelId, item => {
       if (item.type === 'parallel' && item.groups.length < 4) {
-        return addGroupToSplit(item);
+        // Only top-level splits take Team Group names; nested ones subdivide a group
+        const isTopLevel = prev.some(top => top.id === parallelId);
+        return addGroupToSplit(item, isTopLevel ? teamGroupNames : []);
       }
       return item;
     }));
@@ -768,7 +854,9 @@ export default function CreatePracticePlanPage() {
       id: undefined,
       name: overrideName || formData.name,
       description: formData.description,
-      teamName: formData.teamName.trim(),
+      teamName: selectedTeam?.name ?? formData.teamName.trim(),
+      teamId: selectedTeam?.id ?? null,
+      attendance: resolvedAttendance,
       date: new Date(formData.date),
       duration: formData.duration,
       location: formData.location,
@@ -779,7 +867,7 @@ export default function CreatePracticePlanPage() {
       createdAt: now,
       updatedAt: now,
     };
-  }, [formData, drills, timeline, equipment]);
+  }, [formData, drills, timeline, equipment, selectedTeam, resolvedAttendance]);
 
   const exportCurrentPlan = useCallback(async (overrideName?: string) => {
     const planForExport = buildCurrentPracticePlan(overrideName);
@@ -816,7 +904,9 @@ export default function CreatePracticePlanPage() {
       const practicePlan: Omit<PracticePlan, 'id' | 'createdAt' | 'updatedAt'> = {
         name: overrideName || formData.name,
         description: formData.description,
-        teamName: formData.teamName.trim(),
+        teamName: selectedTeam?.name ?? formData.teamName.trim(),
+        teamId: selectedTeam?.id ?? null,
+        attendance: resolvedAttendance,
         date: new Date(formData.date),
         duration: formData.duration,
         location: formData.location,
@@ -855,7 +945,9 @@ export default function CreatePracticePlanPage() {
       await updatePracticePlan(planId, {
         name: formData.name,
         description: formData.description,
-        teamName: formData.teamName.trim(),
+        teamName: selectedTeam?.name ?? formData.teamName.trim(),
+        teamId: selectedTeam?.id ?? null,
+        attendance: resolvedAttendance,
         date: new Date(formData.date),
         duration: formData.duration,
         location: formData.location,
@@ -916,12 +1008,23 @@ export default function CreatePracticePlanPage() {
     }
   };
 
-  const handleLoadPlan = (plan: PracticePlan) => {
+  const handleLoadPlan = async (savedPlan: PracticePlan) => {
+    // Saved plans don't carry library sketches; pull current drill data so they're back in the editor
+    let plan = savedPlan;
+    try {
+      plan = await refreshPlanDrillData(savedPlan);
+    } catch (error) {
+      console.error('Failed to refresh drill data for loaded plan:', error);
+    }
+
     // Load the plan data into the form
     setFormData({
       name: plan.name,
       description: plan.description || '',
       teamName: plan.teamName || '',
+      // Older plans only stored a name; link them to a Team Manager team with that exact name
+      teamId: plan.teamId ?? teams.find(team => team.name === plan.teamName)?.id ?? null,
+      attendance: plan.attendance ?? [],
       date: format(new Date(plan.date), 'yyyy-MM-dd'),
       duration: plan.duration,
       location: plan.location,
@@ -1011,48 +1114,58 @@ export default function CreatePracticePlanPage() {
                 />
               </div>
 
-              <div className="relative">
+              <div>
                 <div className="flex items-center gap-1.5 mb-1">
                   <label 
                     htmlFor="teamName" 
                     className="block font-medium text-gray-700 dark:text-gray-300"
                     style={S.detailsLabel}
                   >
-                    Team Name
+                    Team
                   </label>
-                  <HelpTooltip text="Enter team name" iconClassName="w-3 h-3" />
+                  <HelpTooltip text="Teams from the Team Manager come first, then team names used in previous plans" iconClassName="w-3 h-3" />
                 </div>
-                <input
-                  id="teamName"
-                  type="text"
-                  value={formData.teamName}
-                  onChange={(e) => setFormData({ ...formData, teamName: e.target.value })}
-                  placeholder="Enter team name"
-                  onFocus={() => setIsTeamNameOpen(true)}
-                  onBlur={() => {
-                    window.setTimeout(() => setIsTeamNameOpen(false), 100);
-                  }}
-                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                  style={S.detailsInput}
-                />
-                {isTeamNameOpen && filteredTeamNameOptions.length > 0 && (
-                  <div className="absolute z-50 left-0 right-0 mt-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg max-h-40 overflow-y-auto">
-                    {filteredTeamNameOptions.map((teamName) => (
-                      <button
-                        key={teamName}
-                        type="button"
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => {
-                          setFormData({ ...formData, teamName });
-                          setIsTeamNameOpen(false);
-                        }}
-                        className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
-                      >
-                        {teamName}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <div className="flex gap-1.5">
+                  <select
+                    id="teamName"
+                    value={teamSelectValue}
+                    onChange={(e) => handleTeamSelect(e.target.value)}
+                    className="flex-1 min-w-0 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    style={S.detailsInput}
+                  >
+                    <option value="">Select a team</option>
+                    {teams.length > 0 && (
+                      <optgroup label="Team Manager">
+                        {teams.map(team => (
+                          <option key={team.id} value={`team:${team.id}`}>{team.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {previousPlanTeamNames.length > 0 && (
+                      <optgroup label="Previous plans">
+                        {previousPlanTeamNames.map(name => (
+                          <option key={name} value={`name:${name}`}>{name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {/* Keep a name that's in neither list (e.g. a deleted team) selectable */}
+                    {teamSelectValue && !selectedTeam && !previousPlanTeamNames.includes(formData.teamName) && (
+                      <option value={teamSelectValue}>{formData.teamName}</option>
+                    )}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setIsAttendanceOpen(true)}
+                    disabled={!formData.teamName}
+                    title="Set attendance"
+                    className="flex-shrink-0 flex items-center gap-1 px-2 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed text-[11px]"
+                  >
+                    <UserCheck className="w-3.5 h-3.5" />
+                    {selectedTeam && selectedTeam.players.length > 0
+                      ? `${presentCount}/${selectedTeam.players.length}`
+                      : 'Attendance'}
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-2" style={S.formRowGap}>
@@ -1262,6 +1375,16 @@ export default function CreatePracticePlanPage() {
         <PracticeTimeline timeline={timeline} practiceDuration={formData.duration} />
       </div>
 
+      {/* Attendance Modal */}
+      <AttendanceModal
+        isOpen={isAttendanceOpen}
+        onClose={() => setIsAttendanceOpen(false)}
+        teamName={formData.teamName}
+        team={selectedTeam}
+        attendance={formData.attendance}
+        onChange={(attendance) => setFormData(prev => ({ ...prev, attendance }))}
+      />
+
       {/* Drill Picker Modal */}
       <Modal
         isOpen={isPickerOpen}
@@ -1269,7 +1392,7 @@ export default function CreatePracticePlanPage() {
         title={alongsideDrillTitle}
         size="fixed"
       >
-        <DrillPicker onAdd={handleAddDrill} onPreview={setPreviewDrill} />
+        <DrillPicker onAdd={handleAddDrill} onPreview={handlePreviewDrill} />
       </Modal>
 
       {/* Drill Preview Modal */}
@@ -1332,31 +1455,25 @@ export default function CreatePracticePlanPage() {
               </div>
             )}
 
-            {/* Sketch */}
-            {previewDrill.sketchData && (() => {
-              try {
-                const parsed = JSON.parse(previewDrill.sketchData);
-                if (parsed.imagePreview) {
-                  return (
-                    <div>
-                      <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Sketch</h4>
-                      <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden bg-white dark:bg-gray-900">
-                        <Image 
-                          src={parsed.imagePreview} 
-                          alt={`Sketch for ${previewDrill.name}`}
-                          width={600}
-                          height={256}
-                          className="w-full max-h-64 object-contain"
-                          unoptimized
-                        />
-                      </div>
-                    </div>
-                  );
-                }
-              } catch {
-                return null;
-              }
-              return null;
+            {/* Sketch: the thumbnail until the full sketch loads */}
+            {(() => {
+              const sketchImage = getSketchImagePreview(previewDrill.sketchData) || previewDrill.sketchThumbnail;
+              if (!sketchImage) return null;
+              return (
+                <div>
+                  <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Sketch</h4>
+                  <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden bg-white dark:bg-gray-900">
+                    <Image 
+                      src={sketchImage} 
+                      alt={`Sketch for ${previewDrill.name}`}
+                      width={600}
+                      height={256}
+                      className="w-full max-h-64 object-contain"
+                      unoptimized
+                    />
+                  </div>
+                </div>
+              );
             })()}
 
             {/* Tags */}
